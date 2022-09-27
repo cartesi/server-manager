@@ -32,6 +32,10 @@
 #pragma GCC diagnostic ignored "-Wunused-parameter"
 #pragma GCC diagnostic ignored "-Wdeprecated-declarations"
 #pragma GCC diagnostic ignored "-Wdeprecated-copy"
+#ifdef __clang__
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wdeprecated-builtins"
+#endif
 #define BOOST_LOG_DYN_LINK 1 // NOLINT(cppcoreguidelines-macro-usage)
 #include <boost/core/demangle.hpp>
 #include <boost/coroutine2/coroutine.hpp>
@@ -48,12 +52,19 @@
 #define BOOST_DLL_USE_STD_FS
 #include <boost/dll/runtime_symbol_info.hpp>
 #pragma GCC diagnostic pop
+#ifdef __clang__
+#pragma clang diagnostic pop
+#endif
 
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wunused-parameter"
 #pragma GCC diagnostic ignored "-Wdeprecated-declarations"
 #pragma GCC diagnostic ignored "-Wdeprecated-copy"
 #pragma GCC diagnostic ignored "-Wtype-limits"
+#ifdef __clang__
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wdeprecated-builtins"
+#endif
 #include <grpc++/alarm.h>
 #include <grpc++/grpc++.h>
 #include <grpc++/resource_quota.h>
@@ -63,15 +74,27 @@
 #include "health.grpc.pb.h"
 #include "server-manager.grpc.pb.h"
 #pragma GCC diagnostic pop
+#ifdef __clang__
+#pragma clang diagnostic pop
+#endif
 
 #include <htif-defines.h>
 
 #include "complete-merkle-tree.h"
-#include "htif.h"
 #include "keccak-256-hasher.h"
 #include "merkle-tree-proof.h"
 #include "protobuf-util.h"
-#include "strict-aliasing.h"
+
+/// \brief HTIF yield reasons
+enum HTIF_yield_reason : uint64_t {
+    HTIF_YIELD_REASON_PROGRESS = HTIF_YIELD_REASON_PROGRESS_DEF,
+    HTIF_YIELD_REASON_RX_ACCEPTED = HTIF_YIELD_REASON_RX_ACCEPTED_DEF,
+    HTIF_YIELD_REASON_RX_REJECTED = HTIF_YIELD_REASON_RX_REJECTED_DEF,
+    HTIF_YIELD_REASON_TX_VOUCHER = HTIF_YIELD_REASON_TX_VOUCHER_DEF,
+    HTIF_YIELD_REASON_TX_NOTICE = HTIF_YIELD_REASON_TX_NOTICE_DEF,
+    HTIF_YIELD_REASON_TX_REPORT = HTIF_YIELD_REASON_TX_REPORT_DEF,
+    HTIF_YIELD_REASON_TX_EXCEPTION = HTIF_YIELD_REASON_TX_EXCEPTION_DEF,
+};
 
 constexpr const uint64_t ROLLUP_ADVANCE_STATE = 0;
 constexpr const uint64_t ROLLUP_INSPECT_STATE = 1;
@@ -2404,15 +2427,15 @@ static void process_pending_query(handler_context &hctx, async_context &actx, ep
         uint64_t yield_reason = run_response.value().tohost() << 16 >> 48;
         // process manual yields
         if (run_response.value().iflags_y()) {
-            if (yield_reason == cartesi::HTIF_YIELD_REASON_RX_REJECTED) {
+            if (yield_reason == HTIF_YIELD_REASON_RX_REJECTED) {
                 q.status = completion_status::rejected;
                 LOG_CONTEXT(debug, actx.request_context) << "    Query aborted because machine rejected it";
                 break;
-            } else if (yield_reason == cartesi::HTIF_YIELD_REASON_RX_ACCEPTED) {
+            } else if (yield_reason == HTIF_YIELD_REASON_RX_ACCEPTED) {
                 q.status = completion_status::accepted;
                 LOG_CONTEXT(debug, actx.request_context) << "    Query accepted";
                 break;
-            } else if (yield_reason == cartesi::HTIF_YIELD_REASON_TX_EXCEPTION) {
+            } else if (yield_reason == HTIF_YIELD_REASON_TX_EXCEPTION) {
                 q.status = completion_status::exception;
                 LOG_CONTEXT(debug, actx.request_context) << "    Received an exception while executing query";
                 q.exception_data = read_exception(actx);
@@ -2425,7 +2448,7 @@ static void process_pending_query(handler_context &hctx, async_context &actx, ep
                 "machine returned without hitting mcycle limit or yielding"}));
         }
         // process automatic yields
-        if (yield_reason == cartesi::HTIF_YIELD_REASON_TX_REPORT) {
+        if (yield_reason == HTIF_YIELD_REASON_TX_REPORT) {
             LOG_CONTEXT(debug, actx.request_context) << "    Reading report " << q.reports.size();
             q.reports.push_back(read_report(actx));
         } // else ignore automatic yield
@@ -2508,16 +2531,16 @@ static void process_pending_inputs(handler_context &hctx, async_context &actx, e
             uint64_t yield_reason = run_response.value().tohost() << 16 >> 48;
             // process manual yields
             if (run_response.value().iflags_y()) {
-                if (yield_reason == cartesi::HTIF_YIELD_REASON_RX_REJECTED) {
+                if (yield_reason == HTIF_YIELD_REASON_RX_REJECTED) {
                     skip_reason = completion_status::rejected;
                     LOG_CONTEXT(debug, actx.request_context) << "    Input skipped because machine requested";
                     break;
-                } else if (yield_reason == cartesi::HTIF_YIELD_REASON_RX_ACCEPTED) {
+                } else if (yield_reason == HTIF_YIELD_REASON_RX_ACCEPTED) {
                     // no skip reason because it was not skipped
                     LOG_CONTEXT(debug, actx.request_context) << "    Input accepted";
                     current_mcycle = run_response.value().mcycle();
                     break;
-                } else if (yield_reason == cartesi::HTIF_YIELD_REASON_TX_EXCEPTION) {
+                } else if (yield_reason == HTIF_YIELD_REASON_TX_EXCEPTION) {
                     skip_reason = completion_status::exception;
                     LOG_CONTEXT(debug, actx.request_context) << "    Received an exception while processing input";
                     exception_data = read_exception(actx);
@@ -2530,14 +2553,14 @@ static void process_pending_inputs(handler_context &hctx, async_context &actx, e
                     "machine returned without hitting mcycle limit or yielding"}));
             }
             // process automatic yields
-            if (yield_reason == cartesi::HTIF_YIELD_REASON_TX_VOUCHER) {
+            if (yield_reason == HTIF_YIELD_REASON_TX_VOUCHER) {
                 LOG_CONTEXT(debug, actx.request_context) << "    Reading voucher " << vouchers.size();
                 // read voucher payload
                 vouchers.push_back(read_voucher(actx));
-            } else if (yield_reason == cartesi::HTIF_YIELD_REASON_TX_NOTICE) {
+            } else if (yield_reason == HTIF_YIELD_REASON_TX_NOTICE) {
                 LOG_CONTEXT(debug, actx.request_context) << "    Reading notice " << notices.size();
                 notices.push_back(read_notice(actx));
-            } else if (yield_reason == cartesi::HTIF_YIELD_REASON_TX_REPORT) {
+            } else if (yield_reason == HTIF_YIELD_REASON_TX_REPORT) {
                 LOG_CONTEXT(debug, actx.request_context) << "    Reading report " << reports.size();
                 reports.push_back(read_report(actx));
             } // else ignore automatic yield
@@ -3331,7 +3354,17 @@ int main(int argc, char *argv[]) try {
     init_logger();
     handler_context hctx{};
 
-    hctx.remote_cartesi_machine_path = boost::dll::program_location().replace_filename("remote-cartesi-machine");
+    std::filesystem::path remote_cartesi_machine_path =
+        boost::dll::program_location().replace_filename("remote-cartesi-machine");
+    if (!std::filesystem::exists(remote_cartesi_machine_path)) {
+        remote_cartesi_machine_path = "/opt/cartesi/bin/remote-cartesi-machine";
+        if (!std::filesystem::exists(remote_cartesi_machine_path)) {
+            BOOST_LOG_TRIVIAL(fatal) << "remote-cartesi-machine not found";
+            exit(1);
+        }
+    }
+
+    hctx.remote_cartesi_machine_path = remote_cartesi_machine_path;
     hctx.manager_address = manager_address;
     hctx.server_address = server_address;
 

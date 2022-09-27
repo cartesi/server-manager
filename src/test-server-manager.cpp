@@ -30,6 +30,10 @@
 #pragma GCC diagnostic ignored "-Wdeprecated-declarations"
 #pragma GCC diagnostic ignored "-Wdeprecated-copy"
 #pragma GCC diagnostic ignored "-Wtype-limits"
+#ifdef __clang__
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wdeprecated-builtins"
+#endif
 #include <boost/endian/conversion.hpp>
 #include <google/protobuf/util/json_util.h>
 #include <grpc++/grpc++.h>
@@ -39,10 +43,12 @@
 #include "protobuf-util.h"
 #include "server-manager.grpc.pb.h"
 #pragma GCC diagnostic pop
+#ifdef __clang__
+#pragma clang diagnostic pop
+#endif
 
 #include "back-merkle-tree.h"
 #include "complete-merkle-tree.h"
-#include "machine.h"
 
 using CartesiMachine::Void;
 using grpc::ClientContext;
@@ -170,7 +176,7 @@ private:
     }
 };
 
-using config_function = void (*)(machine_config &);
+// using config_function = void (*)(machine_config &);
 using test_function = void (*)(ServerManagerClient &);
 using test_setup = void (*)(const std::function<void(const std::string &, test_function)> &);
 
@@ -319,128 +325,6 @@ static bool change_storage_directory_permissions(const std::string &storage_path
     std::error_code ec;
     permissions(MANAGER_ROOT_DIR / storage_path, new_perms, ec);
     return ec.value() == 0;
-}
-
-static void create_machine(const std::string &name, const std::string &command,
-    const config_function custom_config = nullptr) {
-    std::cerr << "- Creating " << name << ": ";
-    // Check if machine already exists
-    path machine_directory = get_machine_directory("tests", name);
-    if (exists(machine_directory)) {
-        std::cerr << "Already exists." << std::endl;
-        return;
-    }
-
-    const char *env_images_path = std::getenv("CARTESI_IMAGES_PATH");
-    path images_path = (env_images_path == nullptr) ? current_path() : env_images_path;
-
-    // Machine config
-    machine_config config;
-
-    // Enable machine yield manual and yield automatic
-    config.htif.yield_manual = true;
-    config.htif.yield_automatic = true;
-
-    // Setup rollup device
-    rollup_config rollup;
-    rollup.rx_buffer.start = 0x60000000;
-    rollup.rx_buffer.length = 2 << 20;
-    rollup.tx_buffer.start = 0x60200000;
-    rollup.tx_buffer.length = 2 << 20;
-    rollup.input_metadata.start = 0x60400000;
-    rollup.input_metadata.length = 4096;
-    rollup.voucher_hashes.start = 0x60600000;
-    rollup.voucher_hashes.length = 2 << 20;
-    rollup.notice_hashes.start = 0x60800000;
-    rollup.notice_hashes.length = 2 << 20;
-    config.rollup = rollup;
-
-    // Flash Drives
-    path rootfs = images_path / "rootfs.ext2";
-    config.flash_drive.push_back({flash_start_address(0), file_size(rootfs), false, rootfs.string()});
-
-    // ROM
-    config.rom.image_filename = (images_path / "rom.bin").string();
-    config.rom.bootargs = "console=hvc0 rootfstype=ext2 root=/dev/mtdblock0 rw quiet "
-                          "mtdparts=flash.0:-(root) ";
-
-    if (!command.empty()) {
-        config.rom.bootargs += command;
-    }
-
-    // RAM
-    config.ram.image_filename = (images_path / "linux.bin").string();
-    config.ram.length = 64 << 20;
-
-    if (custom_config != nullptr) {
-        custom_config(config);
-    }
-
-    // Create machine instance, run it until yield and store it
-    machine machine_instance(config);
-    machine_instance.run(UINT64_MAX);
-    machine_instance.store(machine_directory);
-}
-
-static void initialize_machines(bool rebuild, bool http_api) {
-    std::cerr << "Initializing machines:\n";
-    if (!create_storage_directory("tests", rebuild)) {
-        throw std::runtime_error("Could not create storage directory tests " __FILE__ ":" + std::to_string(__LINE__));
-    }
-    if (http_api) {
-        create_machine("advance-state-machine",
-            "-- rollup-init echo-dapp --vouchers=2 --notices=2 --reports=2 --verbose");
-        create_machine("inspect-state-machine", "-- rollup-init echo-dapp --reports=2 --verbose");
-        create_machine("one-notice-machine", "-- rollup-init echo-dapp --vouchers=0 --notices=1 --reports=0 --verbose");
-        create_machine("one-report-machine", "-- rollup-init echo-dapp --vouchers=0 --notices=0 --reports=1 --verbose");
-        create_machine("one-voucher-machine",
-            "-- rollup-init echo-dapp --vouchers=1 --notices=0 --reports=0 --verbose");
-        create_machine("advance-rejecting-machine", "-- rollup-init echo-dapp --reject=0 --verbose");
-        create_machine("inspect-rejecting-machine", "-- rollup-init echo-dapp --reports=0 --reject-inspects --verbose");
-    } else {
-        create_machine("advance-state-machine", "-- ioctl-echo-loop --vouchers=2 --notices=2 --reports=2 --verbose=1");
-        create_machine("inspect-state-machine", "-- ioctl-echo-loop --reports=2 --verbose=1");
-        create_machine("one-notice-machine", "-- ioctl-echo-loop --vouchers=0 --notices=1 --reports=0 --verbose=1");
-        create_machine("one-report-machine", "-- ioctl-echo-loop --vouchers=0 --notices=0 --reports=1 --verbose=1");
-        create_machine("one-voucher-machine", "-- ioctl-echo-loop --vouchers=1 --notices=0 --reports=0 --verbose=1");
-        create_machine("advance-rejecting-machine", "-- ioctl-echo-loop --reject=0 --verbose=1");
-        create_machine("inspect-rejecting-machine", "-- ioctl-echo-loop --reports=0 --reject-inspects --verbose=1");
-    }
-
-    create_machine("no-output-machine", "-- while true; do rollup accept; done");
-    create_machine("halting-machine", "-- rollup accept");
-
-    create_machine("init-exception-machine", R"(-- echo {\"payload\": \"test payload\"} | rollup exception)");
-    create_machine("exception-machine", R"(-- rollup accept; echo {\"payload\": \"test payload\"} | rollup exception)");
-    create_machine("fatal-error-machine",
-        R"(-- echo 'import requests; requests.post("http://127.0.0.1:5004/finish", json={"status": ""accept"}); exit(2);' > s.py; rollup-init python3 s.py)");
-    create_machine("http-server-error-machine",
-        R"(-- echo 'import requests; import os; requests.post("http://127.0.0.1:5004/finish", json={"status": ""accept"}); os.system("killall rollup-http-server");' > s.py; rollup-init python3 s.py)");
-    create_machine("voucher-on-inspect-machine",
-        R"(-- rollup accept; echo {\"address\": \"fafafafafafafafafafafafafafafafafafafafa\", \"payload\": \"test payload\"} | rollup voucher; rollup accept)");
-    create_machine("notice-on-inspect-machine",
-        R"(-- rollup accept; echo {\"payload\": \"test payload\"} | rollup notice; rollup accept)");
-
-    create_machine("no-manual-yield-machine", "-- yield automatic rx-accepted 0",
-        [](machine_config &config) { config.htif.yield_manual = false; });
-    create_machine("no-automatic-yield-machine", "-- rollup accept",
-        [](machine_config &config) { config.htif.yield_automatic = false; });
-    create_machine("console-getchar-machine", "-- rollup accept",
-        [](machine_config &config) { config.htif.console_getchar = true; });
-    create_machine("no-rollup-machine", "-- yield manual rx-accepted 0",
-        [](machine_config &config) { config.rollup.reset(); });
-
-    // shared buffers
-    create_machine("shared-rx-buffer-machine", "-- rollup accept",
-        [](machine_config &config) { config.rollup->rx_buffer.shared = true; });
-    create_machine("shared-tx-buffer-machine", "-- rollup accept",
-        [](machine_config &config) { config.rollup->tx_buffer.shared = true; });
-    create_machine("shared-input-metadata-machine", "-- rollup accept",
-        [](machine_config &config) { config.rollup->input_metadata.shared = true; });
-    create_machine("shared-voucher-hashes-machine", "-- rollup accept",
-        [](machine_config &config) { config.rollup->voucher_hashes.shared = true; });
-    create_machine("shared-notice-hashes-machine", "-- rollup accept",
-        [](machine_config &config) { config.rollup->notice_hashes.shared = true; });
 }
 
 static StartSessionRequest create_valid_start_session_request(const std::string &name = "advance-state-machine") {
@@ -1770,7 +1654,7 @@ static void test_get_session_status(const std::function<void(const std::string &
     });
 
     test("Should complete with session taint_status code DEADLINE_EXCEEDED", [](ServerManagerClient &manager) {
-        StartSessionRequest session_request = create_valid_start_session_request();
+        StartSessionRequest session_request = create_valid_start_session_request("infinite-loop-machine");
         StartSessionResponse session_response;
         auto *server_deadline = session_request.mutable_server_deadline();
         server_deadline->set_advance_state_increment(1);
@@ -2392,7 +2276,7 @@ static void test_get_epoch_status(const std::function<void(const std::string &ti
         });
 
     test("Should complete with session taint_status code DEADLINE_EXCEEDED", [](ServerManagerClient &manager) {
-        StartSessionRequest session_request = create_valid_start_session_request();
+        StartSessionRequest session_request = create_valid_start_session_request("infinite-loop-machine");
         StartSessionResponse session_response;
         auto *server_deadline = session_request.mutable_server_deadline();
         server_deadline->set_advance_state_increment(1);
@@ -3188,7 +3072,7 @@ static void test_inspect_state(const std::function<void(const std::string &title
     });
 
     test("Should complete with Status DEADLINE_EXCEEDED", [](ServerManagerClient &manager) {
-        StartSessionRequest session_request = create_valid_start_session_request("inspect-state-machine");
+        StartSessionRequest session_request = create_valid_start_session_request("infinite-loop-machine");
         StartSessionResponse session_response;
         auto *server_deadline = session_request.mutable_server_deadline();
         server_deadline->set_inspect_state_increment(1);
@@ -4115,15 +3999,8 @@ where
         <ipv6-hostname/address>:<port>
         unix:<path>
 
-    -r
-      recreate test machines if they already exist
-
     --help
       prints this message and exits
-
-    --http
-      uses rollup http-echo-dapp instead of ioctl-echo-loop
-      to perform the tests.
 
 
 )",
@@ -4132,15 +4009,9 @@ where
 
 int main(int argc, char *argv[]) try {
     const char *manager_address = nullptr;
-    bool rebuild = false;
-    bool http_api = false;
 
     for (int i = 1; i < argc; i++) {
-        if (strcmp(argv[i], "-r") == 0) {
-            rebuild = true;
-        } else if (strcmp(argv[i], "--http") == 0) {
-            http_api = true;
-        } else if (strcmp(argv[i], "--help") == 0) {
+        if (strcmp(argv[i], "--help") == 0) {
             help(argv[0]);
             exit(0);
         } else {
@@ -4152,7 +4023,6 @@ int main(int argc, char *argv[]) try {
         std::cerr << "missing manager-address\n";
         exit(1);
     }
-    initialize_machines(rebuild, http_api);
     return run_tests(manager_address);
 } catch (std::exception &e) {
     std::cerr << "Caught exception: " << e.what() << '\n';
