@@ -524,10 +524,10 @@ static void init_valid_inspect_state_request(InspectStateRequest &request, const
 }
 
 static void init_valid_finish_epoch_request(FinishEpochRequest &epoch_request, const std::string &session_id,
-    uint64_t epoch, uint64_t processed_input_count, const std::string &dir = std::string{}) {
+    uint64_t epoch, uint64_t processed_input_count_within_epoch, const std::string &dir = std::string{}) {
     epoch_request.set_session_id(session_id);
     epoch_request.set_active_epoch_index(epoch);
-    epoch_request.set_processed_input_count(processed_input_count);
+    epoch_request.set_processed_input_count_within_epoch(processed_input_count_within_epoch);
     if (!dir.empty()) {
         auto *storage_directory = epoch_request.mutable_storage_directory();
         (*storage_directory) = dir;
@@ -3284,8 +3284,7 @@ static void test_finish_epoch(const std::function<void(const std::string &title,
         FinishEpochRequest epoch_request;
         FinishEpochResponse epoch_response;
         init_valid_finish_epoch_request(epoch_request, session_request.session_id(),
-            session_request.active_epoch_index(), 0);
-        epoch_request.set_processed_input_count(2);
+            session_request.active_epoch_index(), 1);
         status = manager.finish_epoch(epoch_request, epoch_response);
         ASSERT_STATUS(status, "FinishEpoch", false);
         ASSERT_STATUS_CODE(status, "FinishEpoch", StatusCode::INVALID_ARGUMENT);
@@ -3304,8 +3303,7 @@ static void test_finish_epoch(const std::function<void(const std::string &title,
         FinishEpochRequest epoch_request;
         FinishEpochResponse epoch_response;
         init_valid_finish_epoch_request(epoch_request, session_request.session_id(),
-            session_request.active_epoch_index(), 0);
-        epoch_request.set_processed_input_count(10);
+            session_request.active_epoch_index(), 10);
         status = manager.finish_epoch(epoch_request, epoch_response);
         ASSERT_STATUS(status, "FinishEpoch", false);
         ASSERT_STATUS_CODE(status, "FinishEpoch", StatusCode::INVALID_ARGUMENT);
@@ -3888,7 +3886,7 @@ static void test_session_simulations(const std::function<void(const std::string 
             }
 
             // Finish epoch
-            init_valid_finish_epoch_request(epoch_request, session_request.session_id(), 1, 4);
+            init_valid_finish_epoch_request(epoch_request, session_request.session_id(), 1, 2);
             status = manager.finish_epoch(epoch_request, epoch_response);
             ASSERT_STATUS(status, "FinishEpoch", true);
             validate_finish_epoch_response(epoch_response, 1, 2);

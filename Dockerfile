@@ -32,7 +32,7 @@ FROM builder as installer
 
 RUN make install
 
-# Add cartesi user to use this image stage on tests
+# Add cartesi user to use this stage on tests
 RUN addgroup --system --gid 102 cartesi && \
     adduser --system --uid 102 --ingroup cartesi --disabled-login --no-create-home --home /nonexistent --gecos "cartesi user" --shell /bin/false cartesi
 

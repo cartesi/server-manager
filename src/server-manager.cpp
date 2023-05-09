@@ -833,10 +833,10 @@ static handler_type::pull_type *new_FinishEpoch_handler(handler_context &hctx) {
                 THROW((finish_error_yield_none{grpc::StatusCode::INVALID_ARGUMENT, "epoch still has pending inputs"}));
             }
             // If the number of processed inputs does not match the expected, bail out
-            if (session.processed_input_count != request.processed_input_count()) {
+            if (e.processed_inputs.size() != request.processed_input_count_within_epoch()) {
                 THROW((finish_error_yield_none{grpc::StatusCode::INVALID_ARGUMENT,
-                    "incorrect processed input count (expected " + std::to_string(session.processed_input_count) +
-                        ", got " + std::to_string(request.processed_input_count()) + ")"}));
+                    "incorrect processed input count (expected " + std::to_string(e.processed_inputs.size()) +
+                        ", got " + std::to_string(request.processed_input_count_within_epoch()) + ")"}));
             }
             // Try to store session before we change anything
             if (!request.storage_directory().empty()) {
