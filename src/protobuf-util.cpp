@@ -32,8 +32,8 @@ machine_merkle_tree::hash_type get_proto_hash(const CartesiMachine::Hash &proto_
 }
 
 machine_merkle_tree::proof_type get_proto_merkle_tree_proof(const CartesiMachine::MerkleTreeProof &proto_proof) {
-    int log2_target_size = static_cast<int>(proto_proof.log2_target_size());
-    int log2_root_size = static_cast<int>(proto_proof.log2_root_size());
+    const int log2_target_size = static_cast<int>(proto_proof.log2_target_size());
+    const int log2_root_size = static_cast<int>(proto_proof.log2_root_size());
     machine_merkle_tree::proof_type p{log2_root_size, log2_target_size};
     p.set_target_address(proto_proof.target_address());
     p.set_target_hash(get_proto_hash(proto_proof.target_hash()));
