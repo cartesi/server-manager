@@ -1,5 +1,3 @@
-> :warning: The Cartesi team keeps working internally on the next version of this repository, following its regular development roadmap. Whenever there's a new version ready or important fix, these are published to the public source tree as new releases.
-
 # Cartesi Server-Manager
 
 The Cartesi Server-Manager is a microservice that serves as an interface between the Remote Cartesi Machine (RCM) and other components of the Cartesi Rollup node. It is designed to simplify the communication between the RCM and the rest of the Cartesi node. It's written in C/C++ with POSIX dependencies restricted to the terminal and process facilites. Currently, it is distributed as a docker image.
@@ -38,18 +36,21 @@ Obs: Please note that Apple Clang Version number does not follow upstream LLVM/C
 
 #### Ubuntu 22.04
 
-```
+```shell
 sudo apt-get install build-essential automake libtool patchelf cmake pkg-config wget git libreadline-dev libboost-coroutine-dev libboost-context-dev libboost-filesystem-dev libssl-dev openssl libc-ares-dev zlib1g-dev ca-certificates liblua5.3-dev
 ```
+
 #### MacOS
 
 ##### MacPorts
-```
+
+```shell
 sudo port install clang-14 automake boost libtool wget cmake pkgconfig c-ares zlib openssl lua
 ```
 
 ##### Homebrew
-```
+
+```shell
 brew install llvm@14 automake boost libomp wget cmake pkg-config c-ares zlib openssl lua@5.3
 ```
 
@@ -57,37 +58,37 @@ For `create-machines.lua` script to work it is expected that `lua5.3` binary is 
 
 ### Build
 
-```bash
-$ make submodules
-$ make dep
-$ make
+```shell
+make submodules
+make dep
+make
 ```
 
 Cleaning:
 
-```bash
-$ make depclean
-$ make clean
+```shell
+make depclean
+make clean
 ```
 
 ### Running Tests
 
 In order to run the tests for the Cartesi Server-Manager, it is essential to have a fully functional SDK installation located at `/opt/cartesi`. This installation enables the creation of test machines and the execution of the Remote Cartesi Machine. To create the test machines, use the following command:
 
-```bash
-$ make create-machines
+```shell
+make create-machines
 ```
 
 Once the test machines have been created, the Cartesi Server-Manager tests can be executed using the following command:
 
-```bash
-$ make test
+```shell
+make test
 ```
 
 ### Install
 
-```bash
-$ make install
+```shell
+make install
 ```
 
 ## Linter
@@ -100,15 +101,15 @@ We use clang-tidy 14 as the linter.
 
 You need to install the package clang-tidy-14 and set it as the default executable with update-alternatives.
 
-```bash
-$ apt install clang-tidy-14
-$ update-alternatives --install /usr/bin/clang-tidy clang-tidy /usr/bin/clang-tidy-14 120
+```shell
+apt install clang-tidy-14
+update-alternatives --install /usr/bin/clang-tidy clang-tidy /usr/bin/clang-tidy-14 120
 ```
 
 ### Running Lint
 
-```bash
-$ make lint -j$(nproc)
+```shell
+make lint -j$(nproc)
 ```
 
 ## Code format
@@ -121,21 +122,21 @@ We use clang-format to format the code base.
 
 You need to install the package clang-format-14 and set is as the default executable with update-alternatives.
 
-```bash
-$ apt install clang-format-14
-$ update-alternatives --install /usr/bin/clang-format clang-format /usr/bin/clang-format-14 120
+```shell
+apt install clang-format-14
+update-alternatives --install /usr/bin/clang-format clang-format /usr/bin/clang-format-14 120
 ```
 
 ### Formatting code
 
-```bash
-$ make format
+```shell
+make format
 ```
 
 ### Checking whether the code is formatted
 
-```bash
-$ make check-format
+```shell
+make check-format
 ```
 
 ## Contributing
