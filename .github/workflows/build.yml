@@ -318,13 +318,13 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      - uses: depot/setup-action@v1
       - name: Build Debian based docker image
-        uses: docker/build-push-action@v4
+        uses: depot/build-push-action@v1
         with:
           file: Dockerfile
           context: .
-          builder: ${{ steps.buildx.outputs.name }}
-          platforms: linux/amd64
+          platforms: linux/amd64,linux/arm64
           tags: ${{ steps.docker_image_tags.outputs.tags }}
           push: true
           load: false
@@ -334,3 +334,4 @@ jobs:
             RELEASE=${{ (startsWith(github.ref, 'refs/tags/v') && 'yes' || 'no') }}
             EMULATOR_REPOSITORY=${{ github.repository_owner }}/machine-emulator
             EMULATOR_TAG=${{ env.EMULATOR_TAG }}
+          project: ${{ vars.DEPOT_PROJECT }}
