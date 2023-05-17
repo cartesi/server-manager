@@ -99,11 +99,11 @@ We use clang-tidy 14 as the linter.
 
 #### Ubuntu 22.04
 
-You need to install the package clang-tidy-14 and set it as the default executable with update-alternatives.
+You need to install the package clang-tidy-13 and set it as the default executable with update-alternatives.
 
 ```shell
-apt install clang-tidy-14
-update-alternatives --install /usr/bin/clang-tidy clang-tidy /usr/bin/clang-tidy-14 120
+apt install clang-tidy-13
+update-alternatives --install /usr/bin/clang-tidy clang-tidy /usr/bin/clang-tidy-13 120
 ```
 
 ### Running Lint
