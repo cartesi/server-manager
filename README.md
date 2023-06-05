@@ -1,5 +1,3 @@
-> :warning: The Cartesi team keeps working internally on the next version of this repository, following its regular development roadmap. Whenever there's a new version ready or important fix, these are published to the public source tree as new releases.
-
 # Cartesi Server-Manager
 
 The Cartesi Server-Manager is a microservice that serves as an interface between the Remote Cartesi Machine (RCM) and other components of the Cartesi Rollup node. It is designed to simplify the communication between the RCM and the rest of the Cartesi node. It's written in C/C++ with POSIX dependencies restricted to the terminal and process facilites. Currently, it is distributed as a docker image.
