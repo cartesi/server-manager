@@ -697,18 +697,18 @@ static std::string get_session_lock_reason(const std::string &rpc, const std::st
 /// \param keccak_in_hashes Voucher/Notice hash in hashes proof
 /// \param proto_p Pointer to message receiving the proof contents
 static void set_proto_output_validity_proof(const epoch_type &e, uint64_t input_index,
-    const proof_type &output_hashes_in_epoch, uint64_t output_index, const proof_type &keccak_in_hashes,
+    const proof_type &output_hashes_in_epoch, uint64_t output_index, const proof_type &output_hash_in_hashes,
     OutputValidityProof *proto_ovp) {
-    proto_ovp->set_input_index(input_index);
-    proto_ovp->set_output_index(output_index);
-    cartesi::set_proto_hash(keccak_in_hashes.get_root_hash(), proto_ovp->mutable_output_hashes_root_hash());
+    proto_ovp->set_input_index_within_epoch(input_index);
+    proto_ovp->set_output_index_within_input(output_index);
+    cartesi::set_proto_hash(output_hash_in_hashes.get_root_hash(), proto_ovp->mutable_output_hashes_root_hash());
     cartesi::set_proto_hash(e.vouchers_tree.get_root_hash(), proto_ovp->mutable_vouchers_epoch_root_hash());
     cartesi::set_proto_hash(e.notices_tree.get_root_hash(), proto_ovp->mutable_notices_epoch_root_hash());
     cartesi::set_proto_hash(e.most_recent_machine_hash, proto_ovp->mutable_machine_state_hash());
-    for (int log2_size = keccak_in_hashes.get_log2_target_size(); log2_size < keccak_in_hashes.get_log2_root_size();
-         ++log2_size) {
-        cartesi::set_proto_hash(keccak_in_hashes.get_sibling_hash(log2_size),
-            proto_ovp->add_keccak_in_hashes_siblings());
+    for (int log2_size = output_hash_in_hashes.get_log2_target_size();
+         log2_size < output_hash_in_hashes.get_log2_root_size(); ++log2_size) {
+        cartesi::set_proto_hash(output_hash_in_hashes.get_sibling_hash(log2_size),
+            proto_ovp->add_output_hash_in_output_hashes_siblings());
     }
     for (int log2_size = output_hashes_in_epoch.get_log2_target_size();
          log2_size < output_hashes_in_epoch.get_log2_root_size(); ++log2_size) {

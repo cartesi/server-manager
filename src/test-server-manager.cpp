@@ -904,8 +904,8 @@ static void assemble_output_epoch_trees(FinishEpochResponse &response, cartesi::
     uint64_t input_index = 0;
     std::unordered_map<uint64_t, std::pair<uint64_t, uint64_t>> outputs_per_input;
     for (const auto &proof : response.proofs()) {
-        if (outputs_per_input.count(proof.validity().input_index()) == 0) {
-            input_index = proof.validity().input_index();
+        if (outputs_per_input.count(proof.validity().input_index_within_epoch()) == 0) {
+            input_index = proof.validity().input_index_within_epoch();
             outputs_per_input[input_index] = std::make_pair(0, 0);
         }
         auto &[voucher_count, notice_count] = outputs_per_input.at(input_index);
@@ -944,7 +944,7 @@ static void verify_proof(FinishEpochResponse &response, const Proof &proof, uint
     ASSERT(proof.has_validity(), "Proof should have an OutputValidityProof instance");
     const auto &validity = proof.validity();
     // Check output indices
-    ASSERT(proof.output_index() == validity.output_index(), "Proof should have a valid output index");
+    ASSERT(proof.output_index() == validity.output_index_within_input(), "Proof should have a valid output index");
     // Check if validity proof has all the required fields
     ASSERT(validity.has_output_hashes_root_hash() && !validity.output_hashes_root_hash().data().empty(),
         "Validity proof should have a valid output hashes root hash");
@@ -954,7 +954,8 @@ static void verify_proof(FinishEpochResponse &response, const Proof &proof, uint
         "Validity proof should have a valid notices epoch root hash");
     ASSERT(validity.has_machine_state_hash() && !validity.machine_state_hash().data().empty(),
         "Validity proof should have a valid machine state hash");
-    ASSERT(validity.keccak_in_hashes_siblings_size() > 0, "Proof should have keccak in hashes siblings");
+    ASSERT(validity.output_hash_in_output_hashes_siblings_size() > 0,
+        "Proof should have output hash in output hashes siblings");
     ASSERT(validity.output_hashes_in_epoch_siblings_size() > 0, "Proof should have output in hashes epoch siblings");
 
     // Check if validity proof fields match the ones in finish epoch response
@@ -968,47 +969,49 @@ static void verify_proof(FinishEpochResponse &response, const Proof &proof, uint
     // verify proofs
     cryptopp_keccak_256_hasher h;
     auto metadata_log2_size = ilog2(MEMORY_REGION_LENGTH);
-    const auto &keccak_in_hashes_siblings = validity.keccak_in_hashes_siblings();
+    const auto &output_hash_in_output_hashes_siblings = validity.output_hash_in_output_hashes_siblings();
     const auto &output_hashes_in_epoch_siblings = validity.output_hashes_in_epoch_siblings();
     const auto &output_hashes_root_hash = get_proto_hash(validity.output_hashes_root_hash());
 
     if (proof.output_enum() == OutputEnum::VOUCHER) {
         ASSERT(output_hashes_root_hash ==
-                vouchers_tree.get_node_hash(validity.input_index() << LOG2_KECCAK_SIZE, LOG2_KECCAK_SIZE),
+                vouchers_tree.get_node_hash(validity.input_index_within_epoch() << LOG2_KECCAK_SIZE, LOG2_KECCAK_SIZE),
             "Received output hashes root hash should match the calculated one");
 
-        const auto &output_target_hash = get_voucher_keccak_hash(h, validity.input_index());
+        const auto &output_target_hash = get_voucher_keccak_hash(h, validity.input_index_within_epoch());
         auto p1 = assemble_merkle_proof(metadata_log2_size, output_target_hash, output_hashes_root_hash,
-            keccak_in_hashes_siblings, validity.input_index());
+            output_hash_in_output_hashes_siblings, validity.input_index_within_epoch());
         ASSERT(p1.verify(h),
-            "OutputValidityProof output_hashes_root_hash and keccak_in_hashes_siblings verification failed");
+            "OutputValidityProof output_hashes_root_hash and output_hash_in_output_hashes_siblings verification "
+            "failed");
 
         const auto &output_epoch_root_hash = get_proto_hash(validity.vouchers_epoch_root_hash());
         ASSERT(output_epoch_root_hash == vouchers_tree.get_root_hash(),
             "Received vouchers epoch root hash should match the calculated one");
 
         auto p2 = assemble_merkle_proof(LOG2_ROOT_SIZE, output_hashes_root_hash, output_epoch_root_hash,
-            output_hashes_in_epoch_siblings, validity.input_index());
+            output_hashes_in_epoch_siblings, validity.input_index_within_epoch());
         ASSERT(p2.verify(h),
             "OutputValidityProof vouchers_epoch_root_hash and output_hashes_in_epoch_siblings verification failed");
 
     } else {
         ASSERT(output_hashes_root_hash ==
-                notices_tree.get_node_hash(validity.input_index() << LOG2_KECCAK_SIZE, LOG2_KECCAK_SIZE),
+                notices_tree.get_node_hash(validity.input_index_within_epoch() << LOG2_KECCAK_SIZE, LOG2_KECCAK_SIZE),
             "Received output hashes root hash should match the calculated one");
 
-        const auto &output_target_hash = get_notice_keccak_hash(h, validity.input_index());
+        const auto &output_target_hash = get_notice_keccak_hash(h, validity.input_index_within_epoch());
         auto p1 = assemble_merkle_proof(metadata_log2_size, output_target_hash, output_hashes_root_hash,
-            keccak_in_hashes_siblings, validity.input_index());
+            output_hash_in_output_hashes_siblings, validity.input_index_within_epoch());
         ASSERT(p1.verify(h),
-            "OutputValidityProof output_hashes_root_hash and keccak_in_hashes_siblings verification failed");
+            "OutputValidityProof output_hashes_root_hash and output_hash_in_output_hashes_siblings verification "
+            "failed");
 
         const auto &output_epoch_root_hash = get_proto_hash(validity.notices_epoch_root_hash());
         ASSERT(output_epoch_root_hash == notices_tree.get_root_hash(),
             "Received notices epoch root hash should match the calculated one");
 
         auto p2 = assemble_merkle_proof(LOG2_ROOT_SIZE, output_hashes_root_hash, output_epoch_root_hash,
-            output_hashes_in_epoch_siblings, validity.input_index());
+            output_hashes_in_epoch_siblings, validity.input_index_within_epoch());
         ASSERT(p2.verify(h),
             "OutputValidityProof notices_epoch_root_hash and output_hashes_in_epoch_siblings verification failed");
     }
