@@ -10,9 +10,9 @@ RUN apt-get update && \
         libreadline-dev libboost-coroutine-dev libboost-context-dev \
         libboost-filesystem-dev libboost-log-dev libssl-dev libc-ares-dev zlib1g-dev \
         ca-certificates automake libtool patchelf cmake pkg-config lua5.3 liblua5.3-dev \
-        libcrypto++-dev clang-tidy-14 clang-format-14 && \
-    update-alternatives --install /usr/bin/clang-format clang-format /usr/bin/clang-format-14 120 && \
-    update-alternatives --install /usr/bin/clang-tidy clang-tidy /usr/bin/clang-tidy-14 120 && \
+        libcrypto++-dev clang-tidy-13 clang-format-13 && \
+    update-alternatives --install /usr/bin/clang-format clang-format /usr/bin/clang-format-13 120 && \
+    update-alternatives --install /usr/bin/clang-tidy clang-tidy /usr/bin/clang-tidy-13 120 && \
     rm -rf /var/lib/apt/lists/*
 
 WORKDIR /usr/src/server-manager
