@@ -307,7 +307,8 @@ enum class completion_status {
     exception,
     machine_halted,
     cycle_limit_exceeded,
-    time_limit_exceeded
+    time_limit_exceeded,
+    payload_length_limit_exceeded
 };
 
 /// \brief Type holding an input that was successfully processed
@@ -1184,6 +1185,9 @@ static void set_proto_processed_input(const processed_input_type &i, ProcessedIn
             break;
         case completion_status::time_limit_exceeded:
             proto_i->set_status(CompletionStatus::TIME_LIMIT_EXCEEDED);
+            break;
+        case completion_status::payload_length_limit_exceeded:
+            proto_i->set_status(CompletionStatus::PAYLOAD_LENGTH_LIMIT_EXCEEDED);
             break;
     }
 }
@@ -2379,6 +2383,14 @@ static void process_pending_query(handler_context &hctx, async_context &actx, ep
     q.processed_input_count = actx.session.processed_input_count;
     LOG_CONTEXT(debug, actx.request_context) << "  Processing pending query";
     LOG_CONTEXT(debug, actx.request_context) << "    Current input index: " << q.processed_input_count;
+    // Check size of query payload
+    const auto query_payload_size = q.payload.size();
+    if (query_payload_size + EVM_ABI_STRING_HEADER_LENGTH > actx.session.memory_range.rx_buffer.length) {
+        q.status = completion_status::payload_length_limit_exceeded;
+        LOG_CONTEXT(debug, actx.request_context) << "    Query rejected because payload was too long";
+        LOG_CONTEXT(debug, actx.request_context) << "  Done processing query";
+        return;
+    }
     LOG_CONTEXT(debug, actx.request_context) << "    Creating Snapshot";
     // Wait machine server to checkin after spawned
     trigger_and_wait_checkin(hctx, actx, [](handler_context &hctx, async_context &actx) {
@@ -2476,100 +2488,109 @@ static void process_pending_inputs(handler_context &hctx, async_context &actx, e
         auto epoch_input_index = e.processed_inputs.size();
         LOG_CONTEXT(debug, actx.request_context) << "  Processing input " << global_input_index;
         LOG_CONTEXT(debug, actx.request_context) << "    Epoch input index " << epoch_input_index;
+        // Check size of input payload
+        const auto &i = e.pending_inputs.front();
         LOG_CONTEXT(debug, actx.request_context) << "    Creating Snapshot";
         // Wait machine server to checkin after spawned
         trigger_and_wait_checkin(hctx, actx, [](handler_context &hctx, async_context &actx) {
             (void) hctx;
             snapshot(actx);
         });
-        LOG_CONTEXT(debug, actx.request_context) << "    Clearing buffers";
-        clear_memory_ranges(actx);
-        const auto &i = e.pending_inputs.front();
-        LOG_CONTEXT(debug, actx.request_context) << "    Writing rx buffer";
-        write_evm_abi_string(actx, i.payload.begin(), i.payload.end(), actx.session.memory_range.rx_buffer.config);
-        LOG_CONTEXT(debug, actx.request_context) << "    Writing input metadata";
-        auto metadata = evm_abi_encoded_input_metadata(i.metadata);
-        write_memory_range(actx, metadata.begin(), metadata.end(), actx.session.memory_range.input_metadata.config);
-        LOG_CONTEXT(debug, actx.request_context) << "    Resetting iflags_Y";
-        reset_iflags_y(actx);
-        check_htif_yield_ack_data(actx, ROLLUP_ADVANCE_STATE);
-        auto max_mcycle = actx.session.current_mcycle + actx.session.server_cycles.max_advance_state;
-        // Loop getting vouchers and notices until the machine exceeds
-        // max_mcycle, rejects the input, accepts the input, or behaves inaproppriately
+        const auto input_payload_size = i.payload.size();
         completion_status skip_reason = completion_status::accepted;
-        auto start_time = std::chrono::system_clock::now();
-        auto current_mcycle = actx.session.current_mcycle;
-        auto mcycle_increment = actx.session.server_cycles.advance_state_increment;
-        auto deadline_increment = actx.session.server_deadline.advance_state_increment;
-        auto max_deadline = actx.session.server_deadline.advance_state;
+        LOG_CONTEXT(debug, actx.request_context) << "    Input payload size " << input_payload_size;
         std::vector<voucher_type> vouchers;
         std::vector<notice_type> notices;
         std::vector<report_type> reports;
+        auto current_mcycle = actx.session.current_mcycle;
         exception_data_type exception_data;
-        for (;;) {
-            auto run_response = run_machine(actx, current_mcycle, mcycle_increment, max_mcycle, start_time,
-                deadline_increment, max_deadline);
-            if (!run_response.has_value()) {
-                skip_reason = completion_status::time_limit_exceeded;
-                LOG_CONTEXT(debug, actx.request_context) << "    Input skipped because time limit was exceeded";
-                break;
-            }
-            if (run_response.value().mcycle() >= max_mcycle) {
-                skip_reason = completion_status::cycle_limit_exceeded;
-                LOG_CONTEXT(debug, actx.request_context) << "    Input skipped because cycle limit was exceeded";
-                break;
-            }
-            if (run_response.value().iflags_h()) {
-                skip_reason = completion_status::machine_halted;
-                LOG_CONTEXT(debug, actx.request_context) << "    Input skipped because machine is halted";
-                break;
-            }
-            uint64_t yield_reason = run_response.value().tohost() << 16 >> 48;
-            // process manual yields
-            if (run_response.value().iflags_y()) {
-                if (yield_reason == HTIF_YIELD_REASON_RX_REJECTED) {
-                    skip_reason = completion_status::rejected;
-                    LOG_CONTEXT(debug, actx.request_context) << "    Input skipped because machine requested";
-                    break;
-                } else if (yield_reason == HTIF_YIELD_REASON_RX_ACCEPTED) {
-                    // no skip reason because it was not skipped
-                    LOG_CONTEXT(debug, actx.request_context) << "    Input accepted";
-                    current_mcycle = run_response.value().mcycle();
-                    break;
-                } else if (yield_reason == HTIF_YIELD_REASON_TX_EXCEPTION) {
-                    skip_reason = completion_status::exception;
-                    LOG_CONTEXT(debug, actx.request_context) << "    Received an exception while processing input";
-                    exception_data = read_exception(actx);
+        if (input_payload_size + EVM_ABI_STRING_HEADER_LENGTH <= actx.session.memory_range.rx_buffer.length) {
+            LOG_CONTEXT(debug, actx.request_context) << "    Clearing buffers";
+            clear_memory_ranges(actx);
+            LOG_CONTEXT(debug, actx.request_context) << "    Writing rx buffer";
+            write_evm_abi_string(actx, i.payload.begin(), i.payload.end(), actx.session.memory_range.rx_buffer.config);
+            LOG_CONTEXT(debug, actx.request_context) << "    Writing input metadata";
+            auto metadata = evm_abi_encoded_input_metadata(i.metadata);
+            write_memory_range(actx, metadata.begin(), metadata.end(), actx.session.memory_range.input_metadata.config);
+            LOG_CONTEXT(debug, actx.request_context) << "    Resetting iflags_Y";
+            reset_iflags_y(actx);
+            check_htif_yield_ack_data(actx, ROLLUP_ADVANCE_STATE);
+            auto max_mcycle = actx.session.current_mcycle + actx.session.server_cycles.max_advance_state;
+            // Loop getting vouchers and notices until the machine exceeds
+            // max_mcycle, rejects the input, accepts the input, or behaves inaproppriately
+            auto start_time = std::chrono::system_clock::now();
+            auto mcycle_increment = actx.session.server_cycles.advance_state_increment;
+            auto deadline_increment = actx.session.server_deadline.advance_state_increment;
+            auto max_deadline = actx.session.server_deadline.advance_state;
+            for (;;) {
+                auto run_response = run_machine(actx, current_mcycle, mcycle_increment, max_mcycle, start_time,
+                    deadline_increment, max_deadline);
+                if (!run_response.has_value()) {
+                    skip_reason = completion_status::time_limit_exceeded;
+                    LOG_CONTEXT(debug, actx.request_context) << "    Input skipped because time limit was exceeded";
                     break;
                 }
-                THROW((taint_session{actx.session, grpc::StatusCode::OUT_OF_RANGE, "unknown machine yield reason"}));
+                if (run_response.value().mcycle() >= max_mcycle) {
+                    skip_reason = completion_status::cycle_limit_exceeded;
+                    LOG_CONTEXT(debug, actx.request_context) << "    Input skipped because cycle limit was exceeded";
+                    break;
+                }
+                if (run_response.value().iflags_h()) {
+                    skip_reason = completion_status::machine_halted;
+                    LOG_CONTEXT(debug, actx.request_context) << "    Input skipped because machine is halted";
+                    break;
+                }
+                uint64_t yield_reason = run_response.value().tohost() << 16 >> 48;
+                // process manual yields
+                if (run_response.value().iflags_y()) {
+                    if (yield_reason == HTIF_YIELD_REASON_RX_REJECTED) {
+                        skip_reason = completion_status::rejected;
+                        LOG_CONTEXT(debug, actx.request_context) << "    Input skipped because machine requested";
+                        break;
+                    } else if (yield_reason == HTIF_YIELD_REASON_RX_ACCEPTED) {
+                        // no skip reason because it was not skipped
+                        LOG_CONTEXT(debug, actx.request_context) << "    Input accepted";
+                        current_mcycle = run_response.value().mcycle();
+                        break;
+                    } else if (yield_reason == HTIF_YIELD_REASON_TX_EXCEPTION) {
+                        skip_reason = completion_status::exception;
+                        LOG_CONTEXT(debug, actx.request_context) << "    Received an exception while processing input";
+                        exception_data = read_exception(actx);
+                        break;
+                    }
+                    THROW(
+                        (taint_session{actx.session, grpc::StatusCode::OUT_OF_RANGE, "unknown machine yield reason"}));
+                }
+                if (!run_response.value().iflags_x()) {
+                    THROW((taint_session{actx.session, grpc::StatusCode::INTERNAL,
+                        "machine returned without hitting mcycle limit or yielding"}));
+                }
+                // process automatic yields
+                if (yield_reason == HTIF_YIELD_REASON_TX_VOUCHER) {
+                    LOG_CONTEXT(debug, actx.request_context) << "    Reading voucher " << vouchers.size();
+                    // read voucher payload
+                    vouchers.push_back(read_voucher(actx));
+                } else if (yield_reason == HTIF_YIELD_REASON_TX_NOTICE) {
+                    LOG_CONTEXT(debug, actx.request_context) << "    Reading notice " << notices.size();
+                    notices.push_back(read_notice(actx));
+                } else if (yield_reason == HTIF_YIELD_REASON_TX_REPORT) {
+                    LOG_CONTEXT(debug, actx.request_context) << "    Reading report " << reports.size();
+                    reports.push_back(read_report(actx));
+                } // else ignore automatic yield
+                // advance current mcycle and continue
+                current_mcycle = run_response.value().mcycle();
             }
-            if (!run_response.value().iflags_x()) {
+            if (e.vouchers_tree.size() != epoch_input_index) {
                 THROW((taint_session{actx.session, grpc::StatusCode::INTERNAL,
-                    "machine returned without hitting mcycle limit or yielding"}));
+                    "inconsistent number of entries in epoch's session vouchers Merkle tree"}));
             }
-            // process automatic yields
-            if (yield_reason == HTIF_YIELD_REASON_TX_VOUCHER) {
-                LOG_CONTEXT(debug, actx.request_context) << "    Reading voucher " << vouchers.size();
-                // read voucher payload
-                vouchers.push_back(read_voucher(actx));
-            } else if (yield_reason == HTIF_YIELD_REASON_TX_NOTICE) {
-                LOG_CONTEXT(debug, actx.request_context) << "    Reading notice " << notices.size();
-                notices.push_back(read_notice(actx));
-            } else if (yield_reason == HTIF_YIELD_REASON_TX_REPORT) {
-                LOG_CONTEXT(debug, actx.request_context) << "    Reading report " << reports.size();
-                reports.push_back(read_report(actx));
-            } // else ignore automatic yield
-            // advance current mcycle and continue
-            current_mcycle = run_response.value().mcycle();
-        }
-        if (e.vouchers_tree.size() != epoch_input_index) {
-            THROW((taint_session{actx.session, grpc::StatusCode::INTERNAL,
-                "inconsistent number of entries in epoch's session vouchers Merkle tree"}));
-        }
-        if (e.notices_tree.size() != epoch_input_index) {
-            THROW((taint_session{actx.session, grpc::StatusCode::INTERNAL,
-                "inconsistent number of entries in epoch's session notices Merkle tree"}));
+            if (e.notices_tree.size() != epoch_input_index) {
+                THROW((taint_session{actx.session, grpc::StatusCode::INTERNAL,
+                    "inconsistent number of entries in epoch's session notices Merkle tree"}));
+            }
+        } else {
+            LOG_CONTEXT(debug, actx.request_context) << "      Input skipped because payload was too long";
+            skip_reason = completion_status::payload_length_limit_exceeded;
         }
         // If the machine accepted the input
         if (skip_reason == completion_status::accepted) {
@@ -2770,15 +2791,6 @@ static handler_type::pull_type *new_AdvanceState_handler(handler_context &hctx) 
                     "incorrect current input index (expected " + std::to_string(session.processed_input_count) +
                         ", got " + std::to_string(advance_state_request.current_input_index()) + ")"}));
             }
-            // Check size of input payload
-            const auto input_payload_size = advance_state_request.input_payload().size();
-            LOG_CONTEXT(debug, request_context) << "  Input payload size " << input_payload_size;
-            if (input_payload_size + EVM_ABI_STRING_HEADER_LENGTH >= session.memory_range.rx_buffer.length) {
-                THROW((finish_error_yield_none{grpc::StatusCode::INVALID_ARGUMENT,
-                    "input payload too long for rx buffer length (expected " +
-                        std::to_string(session.memory_range.rx_buffer.length - EVM_ABI_STRING_HEADER_LENGTH) +
-                        " bytes max, got " + std::to_string(input_payload_size) + " bytes)"}));
-            }
             // Check input metadata
             if (!advance_state_request.has_input_metadata()) {
                 THROW((finish_error_yield_none{grpc::StatusCode::INVALID_ARGUMENT, "missing input metadata"}));
@@ -2962,14 +2974,6 @@ static handler_type::pull_type *new_InspectState_handler(handler_context &hctx) 
                 THROW((finish_error_yield_none{grpc::StatusCode::INTERNAL, "active epoch not found"}));
             }
             auto &e = epochs[session.active_epoch_index];
-            // Check size of query payload
-            const auto query_payload_size = inspect_state_request.query_payload().size();
-            if (query_payload_size + EVM_ABI_STRING_HEADER_LENGTH >= session.memory_range.rx_buffer.length) {
-                THROW((finish_error_yield_none{grpc::StatusCode::INVALID_ARGUMENT,
-                    "query payload too long for rx buffer length (expected " +
-                        std::to_string(session.memory_range.rx_buffer.length - EVM_ABI_STRING_HEADER_LENGTH) +
-                        " bytes max, got " + std::to_string(query_payload_size) + " bytes)"}));
-            }
             // Make sure there isn't already another pending query
             if (e.pending_query.has_value()) {
                 THROW((finish_error_yield_none{grpc::StatusCode::INTERNAL, "another query is already pending"}));
@@ -3029,6 +3033,9 @@ static handler_type::pull_type *new_InspectState_handler(handler_context &hctx) 
                     break;
                 case completion_status::time_limit_exceeded:
                     inspect_state_response.set_status(CompletionStatus::TIME_LIMIT_EXCEEDED);
+                    break;
+                case completion_status::payload_length_limit_exceeded:
+                    inspect_state_response.set_status(CompletionStatus::PAYLOAD_LENGTH_LIMIT_EXCEEDED);
                     break;
             }
             e.pending_query.reset();

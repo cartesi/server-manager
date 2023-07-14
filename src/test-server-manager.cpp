@@ -1443,29 +1443,6 @@ static void test_advance_state(const std::function<void(const std::string &title
             status = manager.end_session(end_session_request);
             ASSERT_STATUS(status, "EndSession", true);
         });
-
-    test("Should fail to complete input payload does not fit the memory range", [](ServerManagerClient &manager) {
-        StartSessionRequest session_request = create_valid_start_session_request();
-        StartSessionResponse session_response;
-        Status status = manager.start_session(session_request, session_response);
-        ASSERT_STATUS(status, "StartSession", true);
-
-        // enqueue
-        AdvanceStateRequest advance_request;
-        init_valid_advance_state_request(advance_request, session_request.session_id(),
-            session_request.active_epoch_index(), 0);
-        auto *input_payload = advance_request.mutable_input_payload();
-        input_payload->resize(session_response.config().rollup().rx_buffer().length() + 1, 'x');
-        status = manager.advance_state(advance_request);
-        ASSERT_STATUS(status, "AdvanceState", false);
-        ASSERT_STATUS_CODE(status, "AdvanceState", StatusCode::INVALID_ARGUMENT);
-
-        // end session
-        EndSessionRequest end_session_request;
-        end_session_request.set_session_id(session_request.session_id());
-        status = manager.end_session(end_session_request);
-        ASSERT_STATUS(status, "EndSession", true);
-    });
 }
 
 static void test_get_status(const std::function<void(const std::string &title, test_function f)> &test) {
@@ -2175,6 +2152,56 @@ static void test_get_epoch_status(const std::function<void(const std::string &ti
             ASSERT(processed_input.has_exception_data(), "processed input should contain exception data");
             ASSERT(processed_input.exception_data() == "rollup-http-server exited with 0 status",
                 "exception data should contain the expected payload");
+
+            end_session_after_processing_pending_inputs(manager, session_request.session_id(),
+                session_request.active_epoch_index(), false, true);
+        });
+
+    test("Should complete with first processed input as CompletionStatus PAYLOAD_LENGTH_LIMIT_EXCEEDED",
+        [](ServerManagerClient &manager) {
+            StartSessionRequest session_request = create_valid_start_session_request();
+            StartSessionResponse session_response;
+            CyclesConfig *server_cycles = session_request.mutable_server_cycles();
+            server_cycles->set_max_advance_state(2);
+            server_cycles->set_advance_state_increment(2);
+            Status status = manager.start_session(session_request, session_response);
+            ASSERT_STATUS(status, "StartSession", true);
+
+            // enqueue
+            AdvanceStateRequest advance_request;
+            init_valid_advance_state_request(advance_request, session_request.session_id(),
+                session_request.active_epoch_index(), 0);
+            auto *input_payload = advance_request.mutable_input_payload();
+            input_payload->resize(session_response.config().rollup().rx_buffer().length() + 1, 'x');
+            status = manager.advance_state(advance_request);
+            ASSERT_STATUS(status, "AdvanceState", true);
+
+            std::this_thread::sleep_for(5s);
+
+            // get epoch status
+            GetEpochStatusRequest status_request;
+            status_request.set_session_id(session_request.session_id());
+            status_request.set_epoch_index(session_request.active_epoch_index());
+            GetEpochStatusResponse status_response;
+            status = manager.get_epoch_status(status_request, status_response);
+            ASSERT_STATUS(status, "GetEpochStatus", true);
+
+            // assert status_resonse content
+            ASSERT(status_response.session_id() == session_request.session_id(),
+                "status response session_id should be the same as the one created");
+            ASSERT(status_response.epoch_index() == session_request.active_epoch_index(),
+                "status response epoch_index should be 0");
+            ASSERT(status_response.state() == EpochState::ACTIVE, "status response state should be ACTIVE");
+            ASSERT(status_response.processed_inputs_size() == 1, "status response processed_inputs size should be 1");
+            ASSERT(status_response.pending_input_count() == 0, "status response pending_input_count should 0");
+            ASSERT(!status_response.has_taint_status(), "status response should not be tainted");
+
+            auto processed_input = (status_response.processed_inputs())[0];
+            ASSERT(processed_input.input_index() == 0, "processed_input input index should be 0");
+            ASSERT(processed_input.status() == CompletionStatus::PAYLOAD_LENGTH_LIMIT_EXCEEDED,
+                "CompletionStatus should be PAYLOAD_LENGTH_LIMIT_EXCEEDED");
+            ASSERT(processed_input.ProcessedInputOneOf_case() == ProcessedInput::PROCESSEDINPUTONEOF_NOT_SET,
+                "ProcessedInputOneOf should not be set");
 
             end_session_after_processing_pending_inputs(manager, session_request.session_id(),
                 session_request.active_epoch_index(), false, true);
@@ -2947,28 +2974,31 @@ static void test_inspect_state(const std::function<void(const std::string &title
         ASSERT_STATUS(status, "EndSession", true);
     });
 
-    test("Should fail to complete if query_payload is greater then rx buffer", [](ServerManagerClient &manager) {
-        StartSessionRequest session_request = create_valid_start_session_request("inspect-state-machine");
-        StartSessionResponse session_response;
-        Status status = manager.start_session(session_request, session_response);
-        ASSERT_STATUS(status, "StartSession", true);
+    test("Should complete with CompletionStatus PAYLOAD_LENGTH_LIMIT_EXCEEDED if query_payload is greater then rx "
+         "buffer",
+        [](ServerManagerClient &manager) {
+            StartSessionRequest session_request = create_valid_start_session_request("inspect-state-machine");
+            StartSessionResponse session_response;
+            Status status = manager.start_session(session_request, session_response);
+            ASSERT_STATUS(status, "StartSession", true);
 
-        // try to enqueue input on fnished epoch
-        InspectStateRequest inspect_request;
-        init_valid_inspect_state_request(inspect_request, session_request.session_id(), 0);
-        auto *query_payload = inspect_request.mutable_query_payload();
-        query_payload->resize(session_response.config().rollup().rx_buffer().length(), 'f');
-        InspectStateResponse inspect_response;
-        status = manager.inspect_state(inspect_request, inspect_response);
-        ASSERT_STATUS(status, "InspectState", false);
-        ASSERT_STATUS_CODE(status, "InspectState", StatusCode::INVALID_ARGUMENT);
+            InspectStateRequest inspect_request;
+            init_valid_inspect_state_request(inspect_request, session_request.session_id(), 0);
+            auto *query_payload = inspect_request.mutable_query_payload();
+            query_payload->resize(session_response.config().rollup().rx_buffer().length(), 'f');
+            InspectStateResponse inspect_response;
+            status = manager.inspect_state(inspect_request, inspect_response);
+            ASSERT_STATUS(status, "InspectState", true);
 
-        // end session
-        EndSessionRequest end_session_request;
-        end_session_request.set_session_id(session_request.session_id());
-        status = manager.end_session(end_session_request);
-        ASSERT_STATUS(status, "EndSession", true);
-    });
+            check_inspect_state_response(inspect_response, inspect_request.session_id(),
+                session_request.active_epoch_index(), 0, 0, CompletionStatus::PAYLOAD_LENGTH_LIMIT_EXCEEDED);
+
+            // end session
+            EndSessionRequest end_session_request;
+            end_session_request.set_session_id(session_request.session_id());
+            status = manager.end_session(end_session_request);
+            ASSERT_STATUS(status, "EndSession", true);
+        });
 
     test("Should complete with CompletionStatus CYCLE_LIMIT_EXCEEDED", [](ServerManagerClient &manager) {
         StartSessionRequest session_request = create_valid_start_session_request("inspect-state-machine");
