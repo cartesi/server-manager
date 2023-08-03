@@ -286,10 +286,6 @@ static uint64_t new_session_id() {
     return session_id++;
 }
 
-static uint64_t flash_start_address(uint8_t position) {
-    return (1ULL << 55) + (position * (1ULL << 52));
-}
-
 static path get_machine_directory(const std::string &storage_path, const std::string &machine) {
     return MANAGER_ROOT_DIR / storage_path / machine;
 }

@@ -18,12 +18,9 @@ UNAME:=$(shell uname)
 
 BUILDDIR ?= $(abspath ../build/$(UNAME)_$(shell uname -m))
 
-LUA_BIN?=lua5.3
+LUA_BIN?=lua5.4
 GRPC_DIR:=../lib/grpc-interfaces
-HEALTHCHECK_DIR:=$(BUILDDIR)/share/grpc/health/v1
-
-PROTOC:=$(BUILDDIR)/bin/protoc
-GRPC_CPP_PLUGIN=$(BUILDDIR)/bin/grpc_cpp_plugin
+HEALTHCHECK_DIR=../third-party
 
 MANAGER_ADDRESS?=127.0.0.1:5001
 
@@ -58,13 +55,15 @@ CRYPTOPP_INC_Darwin:=-I/opt/local/include
 endif
 endif
 
+PROTOC_Darwin:=/opt/local/bin/protoc
+GRPC_CPP_PLUGIN_Darwin=/opt/local/bin/grpc_cpp_plugin
 BOOST_CORO_LIB_Darwin:=$(BOOST_LIB_DIR_Darwin) -lboost_coroutine-mt -lboost_context-mt
 BOOST_FILESYSTEM_LIB_Darwin:=$(BOOST_LIB_DIR_Darwin) -lboost_system-mt -lboost_filesystem-mt
 BOOST_LOG_LIB_Darwin:=$(BOOST_LIB_DIR_Darwin) -lboost_log-mt -lboost_log_setup-mt -lboost_thread-mt
 BOOST_PROCESS_LIB_Darwin:=-lpthread
-GRPC_INC_Darwin=-I$(BUILDDIR)/include
-GRPC_LIB_Darwin=-L$(BUILDDIR)/lib -lgrpc++ -lgrpc -lgpr -lprotobuf -lpthread -labsl_synchronization
-PROTOBUF_LIB_Darwin:=-L$(BUILDDIR)/lib -lprotobuf -lpthread
+GRPC_INC_Darwin=-I/opt/local/include
+GRPC_LIB_Darwin=-L/opt/local/lib -lgrpc++ -lgrpc -lgpr -lprotobuf -lpthread -labsl_synchronization
+PROTOBUF_LIB_Darwin:=-L/opt/local/lib -lprotobuf -lpthread
 CARTESI_EXECUTABLE_LDFLAGS_Darwin=-Wl,-rpath,$(BUILDDIR)/lib -Wl,-rpath,$(CURDIR)
 PROFILE_DATA_Darwin=default.profdata
 
@@ -73,6 +72,8 @@ SOLDFLAGS_Linux:=-shared -fPIC -pthread
 CC_Linux=gcc
 CXX_Linux=g++
 INCS_Linux=
+PROTOC_Linux:=/usr/bin/protoc
+GRPC_CPP_PLUGIN_Linux=/usr/bin/grpc_cpp_plugin
 BOOST_CORO_LIB_Linux:=-lboost_coroutine -lboost_context
 BOOST_FILESYSTEM_LIB_Linux:=-lboost_system -lboost_filesystem
 BOOST_LOG_LIB_Linux:=-lboost_log -lboost_log_setup -lboost_thread
@@ -83,7 +84,7 @@ CRYPTOPP_INC_Linux:=
 GRPC_INC_Linux:=-I$(BUILDDIR)/include
 GRPC_LIB_Linux:=-L$(BUILDDIR)/lib -lgrpc++ -lgrpc -lgpr -lprotobuf -lpthread -labsl_synchronization
 PROTOBUF_LIB_Linux:=-L$(BUILDDIR)/lib -lprotobuf -lpthread
-CARTESI_EXECUTABLE_LDFLAGS_Linux=-Wl,-rpath,'$$ORIGIN/'
+CARTESI_EXECUTABLE_LDFLAGS_Linux=-Wl,-rpath,'$$ORIGIN/' -Wl,--copy-dt-needed-entries
 PROFILE_DATA_Linux=
 
 CC=$(CC_$(UNAME))
@@ -97,6 +98,8 @@ BOOST_PROCESS_LIB=$(BOOST_PROCESS_LIB_$(UNAME))
 BOOST_INC=$(BOOST_INC_$(UNAME))
 CRYPTOPP_LIB=$(CRYPTOPP_LIB_$(UNAME))
 CRYPTOPP_INC=$(CRYPTOPP_INC_$(UNAME))
+PROTOC=$(PROTOC_$(UNAME))
+GRPC_CPP_PLUGIN=$(GRPC_CPP_PLUGIN_$(UNAME))
 GRPC_LIB=$(GRPC_LIB_$(UNAME))
 GRPC_INC=$(GRPC_INC_$(UNAME))
 PROTOBUF_LIB=$(PROTOBUF_LIB_$(UNAME))

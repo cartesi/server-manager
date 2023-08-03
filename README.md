@@ -10,7 +10,6 @@ Run `make help` for a list of target options. Here are some of them:
 Common targets:
 * all                        - build the src/ code. To build from a clean clone, run: make submodules dep all
   submodules                 - initialize and update submodules
-  dep                        - build dependencies
   create-machines            - create machines for the server-manager tests
   test                       - run server-manager tests
   create-and-test            - create machines for the server-manager tests
@@ -29,29 +28,24 @@ Cleaning targets:
 - C++ Compiler with support for C++17 (tested with GCC >= 8+ and Clang >= 8.x).
 - GNU Make >= 3.81
 - GRPC 1.50.0
-- Lua 5.3.5
+- Lua 5.4.x
 - Boost >= 1.71
 
 Obs: Please note that Apple Clang Version number does not follow upstream LLVM/Clang.
 
-#### Ubuntu 22.04
+#### Debian Bookworm
 
 ```
-sudo apt-get install build-essential automake libtool patchelf cmake pkg-config wget git libreadline-dev libboost-coroutine-dev libboost-context-dev libboost-filesystem-dev libssl-dev openssl libc-ares-dev zlib1g-dev ca-certificates liblua5.3-dev
+sudo apt-get install build-essential wget git libreadline-dev libboost-coroutine-dev libboost-context-dev libboost-filesystem-dev libboost-log-dev libssl-dev libc-ares-dev zlib1g-dev ca-certificates automake libtool patchelf cmake pkg-config lua5.4 liblua5.4-dev libgrpc++-dev libprotobuf-dev protobuf-compiler-grpc libcrypto++-dev
 ```
 #### MacOS
 
 ##### MacPorts
 ```
-sudo port install clang-14 automake boost libtool wget cmake pkgconfig c-ares zlib openssl lua
+sudo port install clang-15 automake boost libtool wget cmake pkgconfig c-ares zlib openssl lua54 grpc
 ```
 
-##### Homebrew
-```
-brew install llvm@14 automake boost libomp wget cmake pkg-config c-ares zlib openssl lua@5.3
-```
-
-For `create-machines.lua` script to work it is expected that `lua5.3` binary is available in the system PATH. If operating system/package manager that you are using provides only `lua` or lua binary named in a different way (e.g. on `Homebrew`), please create symbolic link or alias `lua5.3`.
+For `create-machines.lua` script to work it is expected that `lua5.4` binary is available in the system PATH. If operating system/package manager that you are using provides only `lua` or lua binary named in a different way, please create symbolic link or alias `lua5.4`.
 
 ### Build
 
@@ -70,7 +64,7 @@ $ make clean
 
 ### Running Tests
 
-In order to run the tests for the Cartesi Server-Manager, it is essential to have a fully functional SDK installation located at `/opt/cartesi`. This installation enables the creation of test machines and the execution of the Remote Cartesi Machine. To create the test machines, use the following command:
+In order to run the tests for the Cartesi Server-Manager, it is essential to have a fully functional SDK installation with the binaries on the path. This installation enables the creation of test machines and the execution of the Remote Cartesi Machine. To create the test machines, use the following command:
 
 ```bash
 $ make create-machines
@@ -90,17 +84,17 @@ $ make install
 
 ## Linter
 
-We use clang-tidy 14 as the linter.
+We use clang-tidy 15 as the linter.
 
 ### Linter install
 
-#### Ubuntu 22.04
+#### Debian Bookworm
 
-You need to install the package clang-tidy-14 and set it as the default executable with update-alternatives.
+You need to install the package clang-tidy-15 and set it as the default executable with update-alternatives.
 
 ```bash
-$ apt install clang-tidy-14
-$ update-alternatives --install /usr/bin/clang-tidy clang-tidy /usr/bin/clang-tidy-14 120
+$ apt install clang-tidy-15
+$ update-alternatives --install /usr/bin/clang-tidy clang-tidy /usr/bin/clang-tidy-15 120
 ```
 
 ### Running Lint
@@ -115,13 +109,13 @@ We use clang-format to format the code base.
 
 ### Formatter install
 
-#### Ubuntu
+#### Debian Bookworm
 
-You need to install the package clang-format-14 and set is as the default executable with update-alternatives.
+You need to install the package clang-format-15 and set is as the default executable with update-alternatives.
 
 ```bash
-$ apt install clang-format-14
-$ update-alternatives --install /usr/bin/clang-format clang-format /usr/bin/clang-format-14 120
+$ apt install clang-format-15
+$ update-alternatives --install /usr/bin/clang-format clang-format /usr/bin/clang-format-15 120
 ```
 
 ### Formatting code
