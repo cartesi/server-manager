@@ -3364,7 +3364,7 @@ int main(int argc, char *argv[]) try {
     std::filesystem::path remote_cartesi_machine_path =
         boost::dll::program_location().replace_filename("remote-cartesi-machine");
     if (!std::filesystem::exists(remote_cartesi_machine_path)) {
-        remote_cartesi_machine_path = "/opt/cartesi/bin/remote-cartesi-machine";
+        remote_cartesi_machine_path = "/usr/bin/remote-cartesi-machine";
         if (!std::filesystem::exists(remote_cartesi_machine_path)) {
             BOOST_LOG_TRIVIAL(fatal) << "remote-cartesi-machine not found";
             exit(1);

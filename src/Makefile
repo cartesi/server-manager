@@ -18,12 +18,9 @@ UNAME:=$(shell uname)
 
 BUILDDIR ?= $(abspath ../build/$(UNAME)_$(shell uname -m))
 
-LUA_BIN?=lua5.3
+LUA_BIN?=lua5.4
 GRPC_DIR:=../lib/grpc-interfaces
-HEALTHCHECK_DIR:=$(BUILDDIR)/share/grpc/health/v1
-
-PROTOC:=$(BUILDDIR)/bin/protoc
-GRPC_CPP_PLUGIN=$(BUILDDIR)/bin/grpc_cpp_plugin
+HEALTHCHECK_DIR=../third-party
 
 MANAGER_ADDRESS?=127.0.0.1:5001
 
@@ -32,6 +29,9 @@ ifeq ($(gc),yes)
 GCFLAGS= -fno-inline-small-functions -fno-inline -fdata-sections -ffunction-sections
 GCLDFLAGS=-Wl,--gc-sections,--print-gc-sections
 endif
+
+PROTOC:=$(shell which protoc)
+GRPC_CPP_PLUGIN:=$(shell which grpc_cpp_plugin)
 
 # Mac OS X specific setup
 SOLDFLAGS_Darwin:=-bundle -undefined dynamic_lookup
@@ -62,9 +62,9 @@ BOOST_CORO_LIB_Darwin:=$(BOOST_LIB_DIR_Darwin) -lboost_coroutine-mt -lboost_cont
 BOOST_FILESYSTEM_LIB_Darwin:=$(BOOST_LIB_DIR_Darwin) -lboost_system-mt -lboost_filesystem-mt
 BOOST_LOG_LIB_Darwin:=$(BOOST_LIB_DIR_Darwin) -lboost_log-mt -lboost_log_setup-mt -lboost_thread-mt
 BOOST_PROCESS_LIB_Darwin:=-lpthread
-GRPC_INC_Darwin=-I$(BUILDDIR)/include
-GRPC_LIB_Darwin=-L$(BUILDDIR)/lib -lgrpc++ -lgrpc -lgpr -lprotobuf -lpthread -labsl_synchronization
-PROTOBUF_LIB_Darwin:=-L$(BUILDDIR)/lib -lprotobuf -lpthread
+GRPC_INC_Darwin=-I$(dir $(GRPC_CPP_PLUGIN))../include
+GRPC_LIB_Darwin=-L$(dir $(GRPC_CPP_PLUGIN))../lib -lgrpc++ -lgrpc -lgpr -lprotobuf -lpthread -labsl_synchronization
+PROTOBUF_LIB_Darwin:=-L/opt/local/lib -lprotobuf -lpthread
 CARTESI_EXECUTABLE_LDFLAGS_Darwin=-Wl,-rpath,$(BUILDDIR)/lib -Wl,-rpath,$(CURDIR)
 PROFILE_DATA_Darwin=default.profdata
 
@@ -83,7 +83,7 @@ CRYPTOPP_INC_Linux:=
 GRPC_INC_Linux:=-I$(BUILDDIR)/include
 GRPC_LIB_Linux:=-L$(BUILDDIR)/lib -lgrpc++ -lgrpc -lgpr -lprotobuf -lpthread -labsl_synchronization
 PROTOBUF_LIB_Linux:=-L$(BUILDDIR)/lib -lprotobuf -lpthread
-CARTESI_EXECUTABLE_LDFLAGS_Linux=-Wl,-rpath,'$$ORIGIN/'
+CARTESI_EXECUTABLE_LDFLAGS_Linux=-Wl,-rpath,'$$ORIGIN/' -Wl,--copy-dt-needed-entries
 PROFILE_DATA_Linux=
 
 CC=$(CC_$(UNAME))

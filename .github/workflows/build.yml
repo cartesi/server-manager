@@ -1,11 +1,17 @@
 name: Build/Test/Release
 on: [push]
 env:
-  EMULATOR_TAG: 0.14.0
-  ROM_VERSION: v0.16.0
-  KERNEL_VERSION: v0.16.0
-  LINUX_VERSION: 5.15.63-ctsi-2
-  ROOTFS_VERSION: v0.17.0
+  EMULATOR_REPOSITORY: cartesi/machine-emulator
+  EMULATOR_TAG: 0.15.0
+  ROM_VERSION: v0.17.0
+  KERNEL_VERSION: v0.17.0
+  LINUX_VERSION: 5.15.63-ctsi-2-v0.17.0
+  ROOTFS_VERSION: v0.18.0
+  CARTESI_IMAGES_PATH: /usr/share/cartesi-machine/images
+permissions:
+  id-token: write
+  packages: write
+  contents: read
 jobs:
   build:
     name: Build
@@ -15,7 +21,6 @@ jobs:
         uses: actions/checkout@v3
         with:
           submodules: recursive
-          token: ${{ secrets.CI_TOKEN }}
 
       - name: Login to Docker Hub
         uses: docker/login-action@v2
@@ -23,11 +28,18 @@ jobs:
           username: ${{ secrets.DOCKER_USERNAME }}
           password: ${{ secrets.DOCKER_PASSWORD }}
 
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@v2
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
       - name: Setup docker image tags
         id: docker_image_tags
         uses: docker/metadata-action@v4
         with:
-          images: ${{ secrets.DOCKER_ORGANIZATION }}/server-manager
+          images: ${{ github.repository_owner }}/server-manager
           tags: |
             type=ref,event=branch
             type=ref,event=tag
@@ -51,7 +63,7 @@ jobs:
           cache-to: type=gha,mode=max,scope=ubuntu
           build-args: |
             RELEASE=${{ (startsWith(github.ref, 'refs/tags/v') && 'yes' || 'no') }}
-            EMULATOR_REPOSITORY=${{ secrets.DOCKER_ORGANIZATION }}/machine-emulator
+            EMULATOR_REPOSITORY=${{ env.EMULATOR_REPOSITORY }}
             EMULATOR_TAG=${{ env.EMULATOR_TAG }}
 
   test-ioctl-echo-loop:
@@ -63,13 +75,19 @@ jobs:
         uses: actions/checkout@v3
         with:
           submodules: recursive
-          token: ${{ secrets.CI_TOKEN }}
 
       - name: Login to Docker Hub
         uses: docker/login-action@v2
         with:
           username: ${{ secrets.DOCKER_USERNAME }}
           password: ${{ secrets.DOCKER_PASSWORD }}
+
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@v2
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Set up Docker Buildx
         id: buildx
@@ -82,14 +100,14 @@ jobs:
           context: .
           builder: ${{ steps.buildx.outputs.name }}
           platforms: linux/amd64
-          tags: ${{ secrets.DOCKER_ORGANIZATION }}/server-manager:devel
+          tags: ${{ github.repository_owner }}/server-manager:devel
           push: false
           load: true
           cache-from: type=gha,scope=ubuntu
           cache-to: type=gha,mode=max,scope=ubuntu
           build-args: |
             RELEASE=${{ (startsWith(github.ref, 'refs/tags/v') && 'yes' || 'no') }}
-            EMULATOR_REPOSITORY=${{ secrets.DOCKER_ORGANIZATION }}/machine-emulator
+            EMULATOR_REPOSITORY=${{ env.EMULATOR_REPOSITORY }}
             EMULATOR_TAG=${{ env.EMULATOR_TAG }}
 
       - name: Build installer stage docker image
@@ -100,14 +118,14 @@ jobs:
           target: installer
           builder: ${{ steps.buildx.outputs.name }}
           platforms: linux/amd64
-          tags: ${{ secrets.DOCKER_ORGANIZATION }}/server-manager:installer
+          tags: ${{ github.repository_owner }}/server-manager:installer
           push: false
           load: true
           cache-from: type=gha,scope=ubuntu
           cache-to: type=gha,mode=max,scope=ubuntu
           build-args: |
             RELEASE=${{ (startsWith(github.ref, 'refs/tags/v') && 'yes' || 'no') }}
-            EMULATOR_REPOSITORY=${{ secrets.DOCKER_ORGANIZATION }}/machine-emulator
+            EMULATOR_REPOSITORY=${{ env.EMULATOR_REPOSITORY }}
             EMULATOR_TAG=${{ env.EMULATOR_TAG }}
 
       - name: Download [rootfs.ext2]
@@ -116,7 +134,6 @@ jobs:
           repository: ${{ github.repository_owner }}/image-rootfs
           tag: ${{ env.ROOTFS_VERSION }}
           file: rootfs-${{ env.ROOTFS_VERSION }}.ext2
-          token: ${{ secrets.CI_TOKEN }}
 
       - name: Download [kernel.bin]
         uses: Legion2/download-release-action@v2.1.0
@@ -124,7 +141,6 @@ jobs:
           repository: ${{ github.repository_owner }}/image-kernel
           tag: ${{ env.KERNEL_VERSION }}
           file: linux-${{ env.LINUX_VERSION }}.bin
-          token: ${{ secrets.CI_TOKEN }}
 
       - name: Download [rom.bin]
         uses: Legion2/download-release-action@v2.1.0
@@ -132,25 +148,24 @@ jobs:
           repository: ${{ github.repository_owner }}/machine-emulator-rom
           tag: ${{ env.ROM_VERSION }}
           file: rom-${{ env.ROM_VERSION }}.bin
-          token: ${{ secrets.CI_TOKEN }}
 
       - name: Move images to cartesi images folder
         run: |
-          mkdir -m 755 -p /opt/cartesi/share/images
-          mv rom-*.bin linux-*.bin rootfs-*.ext2 /opt/cartesi/share/images/
-          cd /opt/cartesi/share/images/ && ln -s linux-${{ env.LINUX_VERSION }}.bin linux.bin
-          cd /opt/cartesi/share/images/ && ln -s rom-${{ env.ROM_VERSION }}.bin rom.bin
-          cd /opt/cartesi/share/images/ && ln -s rootfs-${{ env.ROOTFS_VERSION }}.ext2 rootfs.ext2
+          mkdir -m 755 -p /tmp/cartesi-machine-images
+          mv rom-*.bin linux-*.bin rootfs-*.ext2 /tmp/cartesi-machine-images/
+          cd /tmp/cartesi-machine-images/ && ln -s linux-${{ env.LINUX_VERSION }}.bin linux.bin
+          cd /tmp/cartesi-machine-images/ && ln -s rom-${{ env.ROM_VERSION }}.bin rom.bin
+          cd /tmp/cartesi-machine-images/ && ln -s rootfs-${{ env.ROOTFS_VERSION }}.ext2 rootfs.ext2
 
       - name: Run test suite inside the docker image
         run: |
           docker volume create --name server-manager-root
           docker network create mynetwork
-          docker run --rm -v server-manager-root:/tmp/server-manager-root ${{ secrets.DOCKER_ORGANIZATION }}/server-manager:installer chown -R cartesi:cartesi /tmp/server-manager-root
-          docker run --rm -u cartesi:cartesi -v /opt/cartesi/share/images:/opt/cartesi/share/images -v server-manager-root:/tmp/server-manager-root ${{ secrets.DOCKER_ORGANIZATION }}/server-manager:installer make create-machines
-          docker run --rm -p 5001:5001 -h server-manager-container --name server-manager-container --network mynetwork -v server-manager-root:/tmp/server-manager-root ${{ secrets.DOCKER_ORGANIZATION }}/server-manager:devel &
+          docker run --rm -v server-manager-root:/tmp/server-manager-root ${{ github.repository_owner }}/server-manager:installer chown -R cartesi:cartesi /tmp/server-manager-root
+          docker run --rm -u cartesi:cartesi -v /tmp/cartesi-machine-images:${{ env.CARTESI_IMAGES_PATH }} -v server-manager-root:/tmp/server-manager-root ${{ github.repository_owner }}/server-manager:installer make create-machines
+          docker run --rm -p 5001:5001 -h server-manager-container --name server-manager-container --network mynetwork -v server-manager-root:/tmp/server-manager-root ${{ github.repository_owner }}/server-manager:devel &
           timeout 20 bash -c 'while ! nc -q0 127.0.0.1 5001 < /dev/null > /dev/null 2>&1; do sleep 1; done'
-          docker run --rm -u cartesi:cartesi -h test-container --name test-container --network mynetwork -v /opt/cartesi/share/images:/opt/cartesi/share/images -v server-manager-root:/tmp/server-manager-root ${{ secrets.DOCKER_ORGANIZATION }}/server-manager:installer make run-test-server-manager MANAGER_ADDRESS=server-manager-container:5001
+          docker run --rm -u cartesi:cartesi -h test-container --name test-container --network mynetwork -v /tmp/cartesi-machine-images:${{ env.CARTESI_IMAGES_PATH }} -v server-manager-root:/tmp/server-manager-root ${{ github.repository_owner }}/server-manager:installer make run-test-server-manager MANAGER_ADDRESS=server-manager-container:5001
           docker kill server-manager-container
 
   test-echo-dapp:
@@ -162,13 +177,19 @@ jobs:
         uses: actions/checkout@v3
         with:
           submodules: recursive
-          token: ${{ secrets.CI_TOKEN }}
 
       - name: Login to Docker Hub
         uses: docker/login-action@v2
         with:
           username: ${{ secrets.DOCKER_USERNAME }}
           password: ${{ secrets.DOCKER_PASSWORD }}
+
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@v2
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Set up Docker Buildx
         id: buildx
@@ -181,14 +202,14 @@ jobs:
           context: .
           builder: ${{ steps.buildx.outputs.name }}
           platforms: linux/amd64
-          tags: ${{ secrets.DOCKER_ORGANIZATION }}/server-manager:devel
+          tags: ${{ github.repository_owner }}/server-manager:devel
           push: false
           load: true
           cache-from: type=gha,scope=ubuntu
           cache-to: type=gha,mode=max,scope=ubuntu
           build-args: |
             RELEASE=${{ (startsWith(github.ref, 'refs/tags/v') && 'yes' || 'no') }}
-            EMULATOR_REPOSITORY=${{ secrets.DOCKER_ORGANIZATION }}/machine-emulator
+            EMULATOR_REPOSITORY=${{ env.EMULATOR_REPOSITORY }}
             EMULATOR_TAG=${{ env.EMULATOR_TAG }}
 
       - name: Build installer stage docker image
@@ -199,14 +220,14 @@ jobs:
           target: installer
           builder: ${{ steps.buildx.outputs.name }}
           platforms: linux/amd64
-          tags: ${{ secrets.DOCKER_ORGANIZATION }}/server-manager:installer
+          tags: ${{ github.repository_owner }}/server-manager:installer
           push: false
           load: true
           cache-from: type=gha,scope=ubuntu
           cache-to: type=gha,mode=max,scope=ubuntu
           build-args: |
             RELEASE=${{ (startsWith(github.ref, 'refs/tags/v') && 'yes' || 'no') }}
-            EMULATOR_REPOSITORY=${{ secrets.DOCKER_ORGANIZATION }}/machine-emulator
+            EMULATOR_REPOSITORY=${{ env.EMULATOR_REPOSITORY }}
             EMULATOR_TAG=${{ env.EMULATOR_TAG }}
 
       - name: Download [rootfs.ext2]
@@ -215,7 +236,6 @@ jobs:
           repository: ${{ github.repository_owner }}/image-rootfs
           tag: ${{ env.ROOTFS_VERSION }}
           file: rootfs-${{ env.ROOTFS_VERSION }}.ext2
-          token: ${{ secrets.CI_TOKEN }}
 
       - name: Download [kernel.bin]
         uses: Legion2/download-release-action@v2.1.0
@@ -223,7 +243,6 @@ jobs:
           repository: ${{ github.repository_owner }}/image-kernel
           tag: ${{ env.KERNEL_VERSION }}
           file: linux-${{ env.LINUX_VERSION }}.bin
-          token: ${{ secrets.CI_TOKEN }}
 
       - name: Download [rom.bin]
         uses: Legion2/download-release-action@v2.1.0
@@ -231,25 +250,24 @@ jobs:
           repository: ${{ github.repository_owner }}/machine-emulator-rom
           tag: ${{ env.ROM_VERSION }}
           file: rom-${{ env.ROM_VERSION }}.bin
-          token: ${{ secrets.CI_TOKEN }}
 
       - name: Move images to cartesi images folder
         run: |
-          mkdir -m 755 -p /opt/cartesi/share/images
-          mv rom-*.bin linux-*.bin rootfs-*.ext2 /opt/cartesi/share/images/
-          cd /opt/cartesi/share/images/ && ln -s linux-${{ env.LINUX_VERSION }}.bin linux.bin
-          cd /opt/cartesi/share/images/ && ln -s rom-${{ env.ROM_VERSION }}.bin rom.bin
-          cd /opt/cartesi/share/images/ && ln -s rootfs-${{ env.ROOTFS_VERSION }}.ext2 rootfs.ext2
+          mkdir -m 755 -p /tmp/cartesi-machine-images
+          mv rom-*.bin linux-*.bin rootfs-*.ext2 /tmp/cartesi-machine-images/
+          cd /tmp/cartesi-machine-images/ && ln -s linux-${{ env.LINUX_VERSION }}.bin linux.bin
+          cd /tmp/cartesi-machine-images/ && ln -s rom-${{ env.ROM_VERSION }}.bin rom.bin
+          cd /tmp/cartesi-machine-images/ && ln -s rootfs-${{ env.ROOTFS_VERSION }}.ext2 rootfs.ext2
 
       - name: Run test suite inside the docker image
         run: |
           docker volume create --name server-manager-root
           docker network create mynetwork
-          docker run --rm -v server-manager-root:/tmp/server-manager-root ${{ secrets.DOCKER_ORGANIZATION }}/server-manager:installer chown -R cartesi:cartesi /tmp/server-manager-root
-          docker run --rm -u cartesi:cartesi -v /opt/cartesi/share/images:/opt/cartesi/share/images -v server-manager-root:/tmp/server-manager-root ${{ secrets.DOCKER_ORGANIZATION }}/server-manager:installer make create-machines rollup_init=yes
-          docker run --rm -p 5001:5001 -h server-manager-container --name server-manager-container --network mynetwork -v server-manager-root:/tmp/server-manager-root ${{ secrets.DOCKER_ORGANIZATION }}/server-manager:devel &
+          docker run --rm -v server-manager-root:/tmp/server-manager-root ${{ github.repository_owner }}/server-manager:installer chown -R cartesi:cartesi /tmp/server-manager-root
+          docker run --rm -u cartesi:cartesi -v /tmp/cartesi-machine-images:${{ env.CARTESI_IMAGES_PATH }} -v server-manager-root:/tmp/server-manager-root ${{ github.repository_owner }}/server-manager:installer make create-machines rollup_init=yes
+          docker run --rm -p 5001:5001 -h server-manager-container --name server-manager-container --network mynetwork -v server-manager-root:/tmp/server-manager-root ${{ github.repository_owner }}/server-manager:devel &
           timeout 20 bash -c 'while ! nc -q0 127.0.0.1 5001 < /dev/null > /dev/null 2>&1; do sleep 1; done'
-          docker run --rm -u cartesi:cartesi -h test-container --name test-container --network mynetwork -v /opt/cartesi/share/images:/opt/cartesi/share/images -v server-manager-root:/tmp/server-manager-root ${{ secrets.DOCKER_ORGANIZATION }}/server-manager:installer make run-test-server-manager MANAGER_ADDRESS=server-manager-container:5001
+          docker run --rm -u cartesi:cartesi -h test-container --name test-container --network mynetwork -v /tmp/cartesi-machine-images:${{ env.CARTESI_IMAGES_PATH }} -v server-manager-root:/tmp/server-manager-root ${{ github.repository_owner }}/server-manager:installer make run-test-server-manager MANAGER_ADDRESS=server-manager-container:5001
           docker kill server-manager-container
 
   static-analysis:
@@ -261,13 +279,19 @@ jobs:
         uses: actions/checkout@v3
         with:
           submodules: recursive
-          token: ${{ secrets.CI_TOKEN }}
 
       - name: Login to Docker Hub
         uses: docker/login-action@v2
         with:
           username: ${{ secrets.DOCKER_USERNAME }}
           password: ${{ secrets.DOCKER_PASSWORD }}
+
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@v2
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Set up Docker Buildx
         id: buildx
@@ -281,42 +305,42 @@ jobs:
           target: installer
           builder: ${{ steps.buildx.outputs.name }}
           platforms: linux/amd64
-          tags: ${{ secrets.DOCKER_ORGANIZATION }}/server-manager:installer
+          tags: ${{ github.repository_owner }}/server-manager:installer
           push: false
           load: true
           cache-from: type=gha,scope=ubuntu
           cache-to: type=gha,mode=max,scope=ubuntu
           build-args: |
             RELEASE=${{ (startsWith(github.ref, 'refs/tags/v') && 'yes' || 'no') }}
-            EMULATOR_REPOSITORY=${{ secrets.DOCKER_ORGANIZATION }}/machine-emulator
+            EMULATOR_REPOSITORY=${{ env.EMULATOR_REPOSITORY }}
             EMULATOR_TAG=${{ env.EMULATOR_TAG }}
 
       - name: Check format
-        run: docker run --rm ${{ secrets.DOCKER_ORGANIZATION }}/server-manager:installer make check-format
+        run: docker run --rm ${{ github.repository_owner }}/server-manager:installer make check-format
 
       - name: Lint
-        run: docker run --rm ${{ secrets.DOCKER_ORGANIZATION }}/server-manager:installer make lint -j$(nproc)
+        run: docker run --rm ${{ github.repository_owner }}/server-manager:installer make lint -j$(nproc)
 
   release:
     name: Publish Docker image
     needs: [build, test-ioctl-echo-loop, test-echo-dapp, static-analysis]
     runs-on: ubuntu-22.04
-    if: ${{ startsWith(github.ref, 'refs/tags/v') || (github.ref == 'refs/heads/develop') }}
     steps:
       - name: Checkout server-manager source code
         uses: actions/checkout@v3
         with:
           submodules: recursive
-          token: ${{ secrets.CI_TOKEN }}
 
       - name: Setup ubuntu docker image tags
         id: ubuntu_docker_image_tags
         uses: docker/metadata-action@v4
         with:
-          images: ${{ secrets.DOCKER_ORGANIZATION }}/server-manager
+          images: |
+            ghcr.io/${{ github.repository_owner }}/server-manager
+            docker.io/${{ github.repository_owner }}/server-manager,enable=${{ github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/heads/release/') || startsWith(github.ref, 'refs/tags/v') }}
           tags: |
             type=ref,event=branch
-            type=semver,pattern={{version}}
+            type=semver,pattern={{version}},enable=${{startsWith(github.ref, 'refs/tags/v')}}
 
       - name: Set up Docker Buildx
         id: buildx
@@ -327,6 +351,13 @@ jobs:
         with:
           username: ${{ secrets.DOCKER_USERNAME }}
           password: ${{ secrets.DOCKER_PASSWORD }}
+
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@v2
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Build Ubuntu based docker image
         uses: docker/build-push-action@v4
@@ -342,5 +373,5 @@ jobs:
           cache-to: type=gha,mode=max,scope=ubuntu
           build-args: |
             RELEASE=${{ (startsWith(github.ref, 'refs/tags/v') && 'yes' || 'no') }}
-            EMULATOR_REPOSITORY=${{ secrets.DOCKER_ORGANIZATION }}/machine-emulator
+            EMULATOR_REPOSITORY=${{ env.EMULATOR_REPOSITORY }}
             EMULATOR_TAG=${{ env.EMULATOR_TAG }}

@@ -4,7 +4,7 @@
 *.clang-tidy
 
 build
-third-party/grpc
+third-party
 src/server-manager
 src/test-server-manager
 src/server-manager.log
