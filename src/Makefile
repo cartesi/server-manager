@@ -23,6 +23,11 @@ GRPC_DIR:=../lib/grpc-interfaces
 HEALTHCHECK_DIR=../third-party
 
 MANAGER_ADDRESS?=127.0.0.1:5001
+FAST_TEST?=false
+
+ifeq ($(FAST_TEST),true)
+FAST_TEST_FLAG=--fast
+endif
 
 # So we can use gcc to check if there are unused symbols
 ifeq ($(gc),yes)
@@ -254,14 +259,14 @@ test: /tmp/server-manager-root/tests
 	@trap 'make clean-test-processes && echo "\nClean up test execution." && exit 130' INT; \
 	(./server-manager --manager-address=127.0.0.1:5001 >server-manager.log 2>&1 &); \
 	(bash -c 'count=0; while ! echo >/dev/tcp/127.0.0.1/5001 ; do sleep 1; count=$$((count+1)); if [[ $$count -eq 20 ]]; then exit 1; fi; done' > /dev/null 2>&1); \
-	./test-server-manager 127.0.0.1:5001
+	./test-server-manager $(FAST_TEST_FLAG) 127.0.0.1:5001
 	@make clean-test-processes
 
 create-and-test: create-machines
 	$(MAKE) test
 
 run-test-server-manager:
-	./test-server-manager $(MANAGER_ADDRESS)
+	./test-server-manager $(FAST_TEST_FLAG) $(MANAGER_ADDRESS)
 
 CARTESI_PROTOBUF_GEN_OBJS:= \
 	versioning.pb.o \

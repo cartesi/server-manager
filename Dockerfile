@@ -2,7 +2,7 @@ ARG EMULATOR_REPOSITORY=cartesi/machine-emulator
 ARG EMULATOR_TAG=0.15.0
 ARG RELEASE=yes
 
-FROM ${EMULATOR_REPOSITORY}:${EMULATOR_TAG} as dep-builder
+FROM --platform=$TARGETPLATFORM ${EMULATOR_REPOSITORY}:${EMULATOR_TAG} as dep-builder
 
 USER root
 
@@ -20,18 +20,18 @@ RUN apt-get update && \
 
 WORKDIR /usr/src/server-manager
 
-FROM dep-builder as builder
+FROM --platform=$TARGETPLATFORM dep-builder as builder
 
 COPY . .
 
 RUN make -j$(nproc) dep && \
     make -j$(nproc) release=$RELEASE
 
-FROM builder as installer
+FROM --platform=$TARGETPLATFORM builder as installer
 
 RUN make install
 
-FROM ${EMULATOR_REPOSITORY}:${EMULATOR_TAG}
+FROM --platform=$TARGETPLATFORM ${EMULATOR_REPOSITORY}:${EMULATOR_TAG}
 
 USER root
 

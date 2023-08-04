@@ -3992,21 +3992,23 @@ static void test_health_check(const std::function<void(const std::string &title,
     });
 }
 
-static int run_tests(const char *address) {
+static int run_tests(const char *address, const bool fast) {
     ServerManagerClient manager(address);
     test_suite suite(manager);
     suite.add_test_set("GetVersion", test_get_version);
     suite.add_test_set("HealthCheck", test_health_check);
-    suite.add_test_set("StartSession", test_start_session);
-    suite.add_test_set("AdvanceState", test_advance_state);
-    suite.add_test_set("GetStatus", test_get_status);
-    suite.add_test_set("GetSessionStatus", test_get_session_status);
-    suite.add_test_set("GetEpochStatus", test_get_epoch_status);
-    suite.add_test_set("InspectState", test_inspect_state);
-    suite.add_test_set("FinishEpoch", test_finish_epoch);
-    suite.add_test_set("DeleteEpoch", test_delete_epoch);
-    suite.add_test_set("EndSession", test_end_session);
     suite.add_test_set("Session Simulations", test_session_simulations);
+    if (!fast) {
+        suite.add_test_set("StartSession", test_start_session);
+        suite.add_test_set("AdvanceState", test_advance_state);
+        suite.add_test_set("GetStatus", test_get_status);
+        suite.add_test_set("GetSessionStatus", test_get_session_status);
+        suite.add_test_set("GetEpochStatus", test_get_epoch_status);
+        suite.add_test_set("InspectState", test_inspect_state);
+        suite.add_test_set("FinishEpoch", test_finish_epoch);
+        suite.add_test_set("DeleteEpoch", test_delete_epoch);
+        suite.add_test_set("EndSession", test_end_session);
+    }
     return suite.run();
 }
 
@@ -4026,6 +4028,9 @@ where
         <ipv6-hostname/address>:<port>
         unix:<path>
 
+    --fast
+      runs a minimal set of tests (default: false)
+
     --help
       prints this message and exits
 
@@ -4036,11 +4041,14 @@ where
 
 int main(int argc, char *argv[]) try {
     const char *manager_address = nullptr;
+    bool fast = false;
 
     for (int i = 1; i < argc; i++) {
         if (strcmp(argv[i], "--help") == 0) {
             help(argv[0]);
             exit(0);
+        } else if (strcmp(argv[i], "--fast") == 0) {
+            fast = true;
         } else {
             manager_address = argv[i];
         }
@@ -4050,7 +4058,7 @@ int main(int argc, char *argv[]) try {
         std::cerr << "missing manager-address\n";
         exit(1);
     }
-    return run_tests(manager_address);
+    return run_tests(manager_address, fast);
 } catch (std::exception &e) {
     std::cerr << "Caught exception: " << e.what() << '\n';
     return 1;

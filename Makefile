@@ -55,6 +55,12 @@ else
 LIB_EXTENSION := dll
 endif
 
+# Test settings
+MANAGER_ADDRESS?=127.0.0.1:5001
+FAST_TEST?=false
+export MANAGER_ADDRESS
+export FAST_TEST
+
 all: source-default
 
 env:
