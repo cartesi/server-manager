@@ -8,6 +8,7 @@ env:
   LINUX_VERSION: 5.15.63-ctsi-2-v0.17.0
   ROOTFS_VERSION: v0.18.0
   CARTESI_IMAGES_PATH: /usr/share/cartesi-machine/images
+  HOST_IMAGES_PATH: /tmp/cartesi-machine-images/
 permissions:
   id-token: write
   packages: write
@@ -35,39 +36,31 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Setup docker image tags
-        id: docker_image_tags
-        uses: docker/metadata-action@v4
-        with:
-          images: ${{ github.repository_owner }}/server-manager
-          tags: |
-            type=ref,event=branch
-            type=ref,event=tag
-            type=semver,pattern={{version}},enable=${{startsWith(github.ref, 'refs/tags/v')}}
+      - name: Set up Depot CLI
+        uses: depot/setup-action@v1
 
-      - name: Set up Docker Buildx
-        id: buildx
-        uses: docker/setup-buildx-action@v2
-
-      - name: Build Ubuntu based docker image
-        uses: docker/build-push-action@v4
+      - name: Build Debian based docker image
+        uses: depot/build-push-action@v1
         with:
           file: Dockerfile
           context: .
-          builder: ${{ steps.buildx.outputs.name }}
-          platforms: linux/amd64
-          tags: ${{ steps.docker_image_tags.outputs.tags }}
+          platforms: linux/amd64,linux/arm64
+          tags: ${{ github.repository_owner }}/server-manager:devel
           push: false
           load: true
-          cache-from: type=gha,scope=ubuntu
-          cache-to: type=gha,mode=max,scope=ubuntu
+          cache-from: type=gha,scope=debian
+          cache-to: type=gha,mode=max,scope=debian
           build-args: |
             RELEASE=${{ (startsWith(github.ref, 'refs/tags/v') && 'yes' || 'no') }}
             EMULATOR_REPOSITORY=${{ env.EMULATOR_REPOSITORY }}
             EMULATOR_TAG=${{ env.EMULATOR_TAG }}
+          project: ${{ vars.DEPOT_PROJECT }}
 
   test-ioctl-echo-loop:
-    name: Test with ioctl-echo-loop
+    strategy:
+      matrix:
+        arch: ["amd64", "arm64"]
+    name: Test with ioctl-echo-loop (${{ matrix.arch }})
     needs: build
     runs-on: ubuntu-22.04
     steps:
@@ -89,44 +82,46 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Set up Docker Buildx
-        id: buildx
-        uses: docker/setup-buildx-action@v2
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v2
 
-      - name: Build Ubuntu based docker image
-        uses: docker/build-push-action@v4
+      - name: Set up Depot CLI
+        uses: depot/setup-action@v1
+
+      - name: Build Debian based docker image
+        uses: depot/build-push-action@v1
         with:
           file: Dockerfile
           context: .
-          builder: ${{ steps.buildx.outputs.name }}
-          platforms: linux/amd64
+          platforms: linux/${{ matrix.arch }}
           tags: ${{ github.repository_owner }}/server-manager:devel
           push: false
           load: true
-          cache-from: type=gha,scope=ubuntu
-          cache-to: type=gha,mode=max,scope=ubuntu
+          cache-from: type=gha,scope=debian
+          cache-to: type=gha,mode=max,scope=debian
           build-args: |
             RELEASE=${{ (startsWith(github.ref, 'refs/tags/v') && 'yes' || 'no') }}
             EMULATOR_REPOSITORY=${{ env.EMULATOR_REPOSITORY }}
             EMULATOR_TAG=${{ env.EMULATOR_TAG }}
+          project: ${{ vars.DEPOT_PROJECT }}
 
       - name: Build installer stage docker image
-        uses: docker/build-push-action@v4
+        uses: depot/build-push-action@v1
         with:
           file: Dockerfile
           context: .
           target: installer
-          builder: ${{ steps.buildx.outputs.name }}
-          platforms: linux/amd64
+          platforms: linux/${{ matrix.arch }}
           tags: ${{ github.repository_owner }}/server-manager:installer
           push: false
           load: true
-          cache-from: type=gha,scope=ubuntu
-          cache-to: type=gha,mode=max,scope=ubuntu
+          cache-from: type=gha,scope=debian-installer
+          cache-to: type=gha,mode=max,scope=debian-installer
           build-args: |
             RELEASE=${{ (startsWith(github.ref, 'refs/tags/v') && 'yes' || 'no') }}
             EMULATOR_REPOSITORY=${{ env.EMULATOR_REPOSITORY }}
             EMULATOR_TAG=${{ env.EMULATOR_TAG }}
+          project: ${{ vars.DEPOT_PROJECT }}
 
       - name: Download [rootfs.ext2]
         uses: Legion2/download-release-action@v2.1.0
@@ -152,24 +147,27 @@ jobs:
       - name: Move images to cartesi images folder
         run: |
           mkdir -m 755 -p /tmp/cartesi-machine-images
-          mv rom-*.bin linux-*.bin rootfs-*.ext2 /tmp/cartesi-machine-images/
-          cd /tmp/cartesi-machine-images/ && ln -s linux-${{ env.LINUX_VERSION }}.bin linux.bin
-          cd /tmp/cartesi-machine-images/ && ln -s rom-${{ env.ROM_VERSION }}.bin rom.bin
-          cd /tmp/cartesi-machine-images/ && ln -s rootfs-${{ env.ROOTFS_VERSION }}.ext2 rootfs.ext2
+          mv rom-*.bin linux-*.bin rootfs-*.ext2 ${{ env.HOST_IMAGES_PATH }}
+          cd ${{ env.HOST_IMAGES_PATH }} && ln -s linux-${{ env.LINUX_VERSION }}.bin linux.bin
+          cd ${{ env.HOST_IMAGES_PATH }} && ln -s rom-${{ env.ROM_VERSION }}.bin rom.bin
+          cd ${{ env.HOST_IMAGES_PATH }} && ln -s rootfs-${{ env.ROOTFS_VERSION }}.ext2 rootfs.ext2
 
-      - name: Run test suite inside the docker image
+      - name: Run test suite inside the docker image (Linux/${{ matrix.arch }})
         run: |
           docker volume create --name server-manager-root
           docker network create mynetwork
-          docker run --rm -v server-manager-root:/tmp/server-manager-root ${{ github.repository_owner }}/server-manager:installer chown -R cartesi:cartesi /tmp/server-manager-root
-          docker run --rm -u cartesi:cartesi -v /tmp/cartesi-machine-images:${{ env.CARTESI_IMAGES_PATH }} -v server-manager-root:/tmp/server-manager-root ${{ github.repository_owner }}/server-manager:installer make create-machines
-          docker run --rm -p 5001:5001 -h server-manager-container --name server-manager-container --network mynetwork -v server-manager-root:/tmp/server-manager-root ${{ github.repository_owner }}/server-manager:devel &
+          docker run --platform linux/${{ matrix.arch }} --rm -v server-manager-root:/tmp/server-manager-root ${{ github.repository_owner }}/server-manager:installer chown -R cartesi:cartesi /tmp/server-manager-root
+          docker run --platform linux/${{ matrix.arch }} --rm -u cartesi:cartesi -v /tmp/cartesi-machine-images:${{ env.CARTESI_IMAGES_PATH }} -v server-manager-root:/tmp/server-manager-root ${{ github.repository_owner }}/server-manager:installer make create-machines
+          docker run --platform linux/${{ matrix.arch }} --rm -p 5001:5001 -h server-manager-container --name server-manager-container --network mynetwork -v server-manager-root:/tmp/server-manager-root ${{ github.repository_owner }}/server-manager:devel &
           timeout 20 bash -c 'while ! nc -q0 127.0.0.1 5001 < /dev/null > /dev/null 2>&1; do sleep 1; done'
-          docker run --rm -u cartesi:cartesi -h test-container --name test-container --network mynetwork -v /tmp/cartesi-machine-images:${{ env.CARTESI_IMAGES_PATH }} -v server-manager-root:/tmp/server-manager-root ${{ github.repository_owner }}/server-manager:installer make run-test-server-manager MANAGER_ADDRESS=server-manager-container:5001
+          docker run --platform linux/${{ matrix.arch }} --rm -u cartesi:cartesi -h test-container --name test-container --network mynetwork -v /tmp/cartesi-machine-images:${{ env.CARTESI_IMAGES_PATH }} -v server-manager-root:/tmp/server-manager-root ${{ github.repository_owner }}/server-manager:installer make run-test-server-manager MANAGER_ADDRESS=server-manager-container:5001
           docker kill server-manager-container
 
   test-echo-dapp:
-    name: Test with rollup-init echo-dapp
+    strategy:
+      matrix:
+        arch: ["amd64", "arm64"]
+    name: Test with rollup-init echo-dapp (${{ matrix.arch }})
     needs: build
     runs-on: ubuntu-22.04
     steps:
@@ -191,44 +189,46 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Set up Docker Buildx
-        id: buildx
-        uses: docker/setup-buildx-action@v2
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v2
 
-      - name: Build Ubuntu based docker image
-        uses: docker/build-push-action@v4
+      - name: Set up Depot CLI
+        uses: depot/setup-action@v1
+
+      - name: Build Debian based docker image
+        uses: depot/build-push-action@v1
         with:
           file: Dockerfile
           context: .
-          builder: ${{ steps.buildx.outputs.name }}
-          platforms: linux/amd64
+          platforms: linux/${{ matrix.arch }}
           tags: ${{ github.repository_owner }}/server-manager:devel
           push: false
           load: true
-          cache-from: type=gha,scope=ubuntu
-          cache-to: type=gha,mode=max,scope=ubuntu
+          cache-from: type=gha,scope=debian
+          cache-to: type=gha,mode=max,scope=debian
           build-args: |
             RELEASE=${{ (startsWith(github.ref, 'refs/tags/v') && 'yes' || 'no') }}
             EMULATOR_REPOSITORY=${{ env.EMULATOR_REPOSITORY }}
             EMULATOR_TAG=${{ env.EMULATOR_TAG }}
+          project: ${{ vars.DEPOT_PROJECT }}
 
       - name: Build installer stage docker image
-        uses: docker/build-push-action@v4
+        uses: depot/build-push-action@v1
         with:
           file: Dockerfile
           context: .
           target: installer
-          builder: ${{ steps.buildx.outputs.name }}
-          platforms: linux/amd64
+          platforms: linux/${{ matrix.arch }}
           tags: ${{ github.repository_owner }}/server-manager:installer
           push: false
           load: true
-          cache-from: type=gha,scope=ubuntu
-          cache-to: type=gha,mode=max,scope=ubuntu
+          cache-from: type=gha,scope=debian-installer
+          cache-to: type=gha,mode=max,scope=debian-installer
           build-args: |
             RELEASE=${{ (startsWith(github.ref, 'refs/tags/v') && 'yes' || 'no') }}
             EMULATOR_REPOSITORY=${{ env.EMULATOR_REPOSITORY }}
             EMULATOR_TAG=${{ env.EMULATOR_TAG }}
+          project: ${{ vars.DEPOT_PROJECT }}
 
       - name: Download [rootfs.ext2]
         uses: Legion2/download-release-action@v2.1.0
@@ -254,21 +254,22 @@ jobs:
       - name: Move images to cartesi images folder
         run: |
           mkdir -m 755 -p /tmp/cartesi-machine-images
-          mv rom-*.bin linux-*.bin rootfs-*.ext2 /tmp/cartesi-machine-images/
-          cd /tmp/cartesi-machine-images/ && ln -s linux-${{ env.LINUX_VERSION }}.bin linux.bin
-          cd /tmp/cartesi-machine-images/ && ln -s rom-${{ env.ROM_VERSION }}.bin rom.bin
-          cd /tmp/cartesi-machine-images/ && ln -s rootfs-${{ env.ROOTFS_VERSION }}.ext2 rootfs.ext2
+          mv rom-*.bin linux-*.bin rootfs-*.ext2 ${{ env.HOST_IMAGES_PATH }}
+          cd ${{ env.HOST_IMAGES_PATH }} && ln -s linux-${{ env.LINUX_VERSION }}.bin linux.bin
+          cd ${{ env.HOST_IMAGES_PATH }} && ln -s rom-${{ env.ROM_VERSION }}.bin rom.bin
+          cd ${{ env.HOST_IMAGES_PATH }} && ln -s rootfs-${{ env.ROOTFS_VERSION }}.ext2 rootfs.ext2
 
-      - name: Run test suite inside the docker image
+      - name: Run test suite inside the docker image (Linux/${{ matrix.arch }})
         run: |
           docker volume create --name server-manager-root
           docker network create mynetwork
-          docker run --rm -v server-manager-root:/tmp/server-manager-root ${{ github.repository_owner }}/server-manager:installer chown -R cartesi:cartesi /tmp/server-manager-root
-          docker run --rm -u cartesi:cartesi -v /tmp/cartesi-machine-images:${{ env.CARTESI_IMAGES_PATH }} -v server-manager-root:/tmp/server-manager-root ${{ github.repository_owner }}/server-manager:installer make create-machines rollup_init=yes
-          docker run --rm -p 5001:5001 -h server-manager-container --name server-manager-container --network mynetwork -v server-manager-root:/tmp/server-manager-root ${{ github.repository_owner }}/server-manager:devel &
+          docker run --platform linux/${{ matrix.arch }} --rm -v server-manager-root:/tmp/server-manager-root ${{ github.repository_owner }}/server-manager:installer chown -R cartesi:cartesi /tmp/server-manager-root
+          docker run --platform linux/${{ matrix.arch }} --rm -u cartesi:cartesi -v /tmp/cartesi-machine-images:${{ env.CARTESI_IMAGES_PATH }} -v server-manager-root:/tmp/server-manager-root ${{ github.repository_owner }}/server-manager:installer make create-machines rollup_init=yes
+          docker run --platform linux/${{ matrix.arch }} --rm -p 5001:5001 -h server-manager-container --name server-manager-container --network mynetwork -v server-manager-root:/tmp/server-manager-root ${{ github.repository_owner }}/server-manager:devel &
           timeout 20 bash -c 'while ! nc -q0 127.0.0.1 5001 < /dev/null > /dev/null 2>&1; do sleep 1; done'
-          docker run --rm -u cartesi:cartesi -h test-container --name test-container --network mynetwork -v /tmp/cartesi-machine-images:${{ env.CARTESI_IMAGES_PATH }} -v server-manager-root:/tmp/server-manager-root ${{ github.repository_owner }}/server-manager:installer make run-test-server-manager MANAGER_ADDRESS=server-manager-container:5001
+          docker run --platform linux/${{ matrix.arch }} --rm -u cartesi:cartesi -h test-container --name test-container --network mynetwork -v /tmp/cartesi-machine-images:${{ env.CARTESI_IMAGES_PATH }} -v server-manager-root:/tmp/server-manager-root ${{ github.repository_owner }}/server-manager:installer make run-test-server-manager MANAGER_ADDRESS=server-manager-container:5001
           docker kill server-manager-container
+
 
   static-analysis:
     name: Static Analysis
@@ -293,27 +294,26 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Set up Docker Buildx
-        id: buildx
-        uses: docker/setup-buildx-action@v2
+      - name: Set up Depot CLI
+        uses: depot/setup-action@v1
 
-      - name: Build Ubuntu based docker image
-        uses: docker/build-push-action@v4
+      - name: Build Debian based docker image
+        uses: depot/build-push-action@v1
         with:
           file: Dockerfile
           context: .
           target: installer
-          builder: ${{ steps.buildx.outputs.name }}
           platforms: linux/amd64
           tags: ${{ github.repository_owner }}/server-manager:installer
           push: false
           load: true
-          cache-from: type=gha,scope=ubuntu
-          cache-to: type=gha,mode=max,scope=ubuntu
+          cache-from: type=gha,scope=debian
+          cache-to: type=gha,mode=max,scope=debian
           build-args: |
             RELEASE=${{ (startsWith(github.ref, 'refs/tags/v') && 'yes' || 'no') }}
             EMULATOR_REPOSITORY=${{ env.EMULATOR_REPOSITORY }}
             EMULATOR_TAG=${{ env.EMULATOR_TAG }}
+          project: ${{ vars.DEPOT_PROJECT }}
 
       - name: Check format
         run: docker run --rm ${{ github.repository_owner }}/server-manager:installer make check-format
@@ -331,8 +331,8 @@ jobs:
         with:
           submodules: recursive
 
-      - name: Setup ubuntu docker image tags
-        id: ubuntu_docker_image_tags
+      - name: Setup debian docker image tags
+        id: debian_docker_image_tags
         uses: docker/metadata-action@v4
         with:
           images: |
@@ -341,10 +341,6 @@ jobs:
           tags: |
             type=ref,event=branch
             type=semver,pattern={{version}},enable=${{startsWith(github.ref, 'refs/tags/v')}}
-
-      - name: Set up Docker Buildx
-        id: buildx
-        uses: docker/setup-buildx-action@v2
 
       - name: Login to Docker Hub
         uses: docker/login-action@v2
@@ -359,19 +355,22 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Build Ubuntu based docker image
-        uses: docker/build-push-action@v4
+      - name: Set up Depot CLI
+        uses: depot/setup-action@v1
+
+      - name: Build Debian based docker image
+        uses: depot/build-push-action@v1
         with:
           file: Dockerfile
           context: .
-          builder: ${{ steps.buildx.outputs.name }}
-          platforms: linux/amd64
-          tags: ${{ steps.ubuntu_docker_image_tags.outputs.tags }}
+          platforms: linux/amd64,linux/arm64
+          tags: ${{ steps.debian_docker_image_tags.outputs.tags }}
           push: true
           load: false
-          cache-from: type=gha,scope=ubuntu
-          cache-to: type=gha,mode=max,scope=ubuntu
+          cache-from: type=gha,scope=debian
+          cache-to: type=gha,mode=max,scope=debian
           build-args: |
             RELEASE=${{ (startsWith(github.ref, 'refs/tags/v') && 'yes' || 'no') }}
             EMULATOR_REPOSITORY=${{ env.EMULATOR_REPOSITORY }}
             EMULATOR_TAG=${{ env.EMULATOR_TAG }}
+          project: ${{ vars.DEPOT_PROJECT }}
