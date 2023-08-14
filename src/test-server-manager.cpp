@@ -565,12 +565,12 @@ void assert_bool(bool value, const std::string &msg, const std::string &file, in
 #define ASSERT_STATUS_CODE(s, f, v) assert_status_code(s, f, v, __FILE__, __LINE__)
 
 static void test_get_version(const std::function<void(const std::string &title, test_function f)> &test) {
-    test("The server-manager server version should be 0.7.x", [](ServerManagerClient &manager) {
+    test("The server-manager server version should be 0.8.x", [](ServerManagerClient &manager) {
         Versioning::GetVersionResponse response;
         Status status = manager.get_version(response);
         ASSERT_STATUS(status, "GetVersion", true);
         ASSERT((response.version().major() == 0), "Version Major should be 0");
-        ASSERT((response.version().minor() == 7), "Version Minor should be 6");
+        ASSERT((response.version().minor() == 8), "Version Minor should be 8");
     });
 }
 
