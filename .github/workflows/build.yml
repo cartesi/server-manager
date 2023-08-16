@@ -8,6 +8,7 @@ env:
   LINUX_VERSION: 5.15.63-ctsi-2-v0.17.0
   ROOTFS_VERSION: v0.18.0
   CARTESI_IMAGES_PATH: /usr/share/cartesi-machine/images
+  HOST_IMAGES_PATH: /tmp/cartesi-machine-images/
 permissions:
   id-token: write
   packages: write
@@ -55,8 +56,11 @@ jobs:
             EMULATOR_TAG=${{ env.EMULATOR_TAG }}
           project: ${{ vars.DEPOT_PROJECT }}
 
-  test-ioctl-echo-loop-amd64:
-    name: Test with ioctl-echo-loop (AMD64)
+  test-ioctl-echo-loop:
+    strategy:
+      matrix:
+        arch: ["amd64", "arm64"]
+    name: Test with ioctl-echo-loop (${{ matrix.arch }})
     needs: build
     runs-on: ubuntu-22.04
     steps:
@@ -89,7 +93,7 @@ jobs:
         with:
           file: Dockerfile
           context: .
-          platforms: linux/amd64
+          platforms: linux/${{ matrix.arch }}
           tags: ${{ github.repository_owner }}/server-manager:devel
           push: false
           load: true
@@ -107,7 +111,7 @@ jobs:
           file: Dockerfile
           context: .
           target: installer
-          platforms: linux/amd64
+          platforms: linux/${{ matrix.arch }}
           tags: ${{ github.repository_owner }}/server-manager:installer
           push: false
           load: true
@@ -143,24 +147,27 @@ jobs:
       - name: Move images to cartesi images folder
         run: |
           mkdir -m 755 -p /tmp/cartesi-machine-images
-          mv rom-*.bin linux-*.bin rootfs-*.ext2 /tmp/cartesi-machine-images/
-          cd /tmp/cartesi-machine-images/ && ln -s linux-${{ env.LINUX_VERSION }}.bin linux.bin
-          cd /tmp/cartesi-machine-images/ && ln -s rom-${{ env.ROM_VERSION }}.bin rom.bin
-          cd /tmp/cartesi-machine-images/ && ln -s rootfs-${{ env.ROOTFS_VERSION }}.ext2 rootfs.ext2
+          mv rom-*.bin linux-*.bin rootfs-*.ext2 ${{ env.HOST_IMAGES_PATH }}
+          cd ${{ env.HOST_IMAGES_PATH }} && ln -s linux-${{ env.LINUX_VERSION }}.bin linux.bin
+          cd ${{ env.HOST_IMAGES_PATH }} && ln -s rom-${{ env.ROM_VERSION }}.bin rom.bin
+          cd ${{ env.HOST_IMAGES_PATH }} && ln -s rootfs-${{ env.ROOTFS_VERSION }}.ext2 rootfs.ext2
 
-      - name: Run test suite inside the docker image (Linux/AMD64)
+      - name: Run test suite inside the docker image (Linux/${{ matrix.arch }})
         run: |
           docker volume create --name server-manager-root
           docker network create mynetwork
-          docker run --rm -v server-manager-root:/tmp/server-manager-root ${{ github.repository_owner }}/server-manager:installer chown -R cartesi:cartesi /tmp/server-manager-root
-          docker run --rm -u cartesi:cartesi -v /tmp/cartesi-machine-images:${{ env.CARTESI_IMAGES_PATH }} -v server-manager-root:/tmp/server-manager-root ${{ github.repository_owner }}/server-manager:installer make create-machines
-          docker run --rm -p 5001:5001 -h server-manager-container --name server-manager-container --network mynetwork -v server-manager-root:/tmp/server-manager-root ${{ github.repository_owner }}/server-manager:devel &
+          docker run --platform linux/${{ matrix.arch }} --rm -v server-manager-root:/tmp/server-manager-root ${{ github.repository_owner }}/server-manager:installer chown -R cartesi:cartesi /tmp/server-manager-root
+          docker run --platform linux/${{ matrix.arch }} --rm -u cartesi:cartesi -v /tmp/cartesi-machine-images:${{ env.CARTESI_IMAGES_PATH }} -v server-manager-root:/tmp/server-manager-root ${{ github.repository_owner }}/server-manager:installer make create-machines
+          docker run --platform linux/${{ matrix.arch }} --rm -p 5001:5001 -h server-manager-container --name server-manager-container --network mynetwork -v server-manager-root:/tmp/server-manager-root ${{ github.repository_owner }}/server-manager:devel &
           timeout 20 bash -c 'while ! nc -q0 127.0.0.1 5001 < /dev/null > /dev/null 2>&1; do sleep 1; done'
-          docker run --rm -u cartesi:cartesi -h test-container --name test-container --network mynetwork -v /tmp/cartesi-machine-images:${{ env.CARTESI_IMAGES_PATH }} -v server-manager-root:/tmp/server-manager-root ${{ github.repository_owner }}/server-manager:installer make run-test-server-manager MANAGER_ADDRESS=server-manager-container:5001
+          docker run --platform linux/${{ matrix.arch }} --rm -u cartesi:cartesi -h test-container --name test-container --network mynetwork -v /tmp/cartesi-machine-images:${{ env.CARTESI_IMAGES_PATH }} -v server-manager-root:/tmp/server-manager-root ${{ github.repository_owner }}/server-manager:installer make run-test-server-manager MANAGER_ADDRESS=server-manager-container:5001
           docker kill server-manager-container
 
-  test-ioctl-echo-loop-arm64:
-    name: Test with ioctl-echo-loop (ARM64)
+  test-echo-dapp:
+    strategy:
+      matrix:
+        arch: ["amd64", "arm64"]
+    name: Test with rollup-init echo-dapp (${{ matrix.arch }})
     needs: build
     runs-on: ubuntu-22.04
     steps:
@@ -193,7 +200,7 @@ jobs:
         with:
           file: Dockerfile
           context: .
-          platforms: linux/arm64
+          platforms: linux/${{ matrix.arch }}
           tags: ${{ github.repository_owner }}/server-manager:devel
           push: false
           load: true
@@ -211,7 +218,7 @@ jobs:
           file: Dockerfile
           context: .
           target: installer
-          platforms: linux/arm64
+          platforms: linux/${{ matrix.arch }}
           tags: ${{ github.repository_owner }}/server-manager:installer
           push: false
           load: true
@@ -247,229 +254,22 @@ jobs:
       - name: Move images to cartesi images folder
         run: |
           mkdir -m 755 -p /tmp/cartesi-machine-images
-          mv rom-*.bin linux-*.bin rootfs-*.ext2 /tmp/cartesi-machine-images/
-          cd /tmp/cartesi-machine-images/ && ln -s linux-${{ env.LINUX_VERSION }}.bin linux.bin
-          cd /tmp/cartesi-machine-images/ && ln -s rom-${{ env.ROM_VERSION }}.bin rom.bin
-          cd /tmp/cartesi-machine-images/ && ln -s rootfs-${{ env.ROOTFS_VERSION }}.ext2 rootfs.ext2
+          mv rom-*.bin linux-*.bin rootfs-*.ext2 ${{ env.HOST_IMAGES_PATH }}
+          cd ${{ env.HOST_IMAGES_PATH }} && ln -s linux-${{ env.LINUX_VERSION }}.bin linux.bin
+          cd ${{ env.HOST_IMAGES_PATH }} && ln -s rom-${{ env.ROM_VERSION }}.bin rom.bin
+          cd ${{ env.HOST_IMAGES_PATH }} && ln -s rootfs-${{ env.ROOTFS_VERSION }}.ext2 rootfs.ext2
 
-      - name: Run test suite inside the docker image (Linux/ARM64)
+      - name: Run test suite inside the docker image (Linux/${{ matrix.arch }})
         run: |
           docker volume create --name server-manager-root
           docker network create mynetwork
-          docker run --platform linux/arm64 --rm -v server-manager-root:/tmp/server-manager-root ${{ github.repository_owner }}/server-manager:installer chown -R cartesi:cartesi /tmp/server-manager-root
-          docker run --platform linux/arm64 --rm -u cartesi:cartesi -v /tmp/cartesi-machine-images:${{ env.CARTESI_IMAGES_PATH }} -v server-manager-root:/tmp/server-manager-root ${{ github.repository_owner }}/server-manager:installer make create-machines
-          docker run --platform linux/arm64 --rm -p 5001:5001 -h server-manager-container --name server-manager-container --network mynetwork -v server-manager-root:/tmp/server-manager-root ${{ github.repository_owner }}/server-manager:devel &
+          docker run --platform linux/${{ matrix.arch }} --rm -v server-manager-root:/tmp/server-manager-root ${{ github.repository_owner }}/server-manager:installer chown -R cartesi:cartesi /tmp/server-manager-root
+          docker run --platform linux/${{ matrix.arch }} --rm -u cartesi:cartesi -v /tmp/cartesi-machine-images:${{ env.CARTESI_IMAGES_PATH }} -v server-manager-root:/tmp/server-manager-root ${{ github.repository_owner }}/server-manager:installer make create-machines rollup_init=yes
+          docker run --platform linux/${{ matrix.arch }} --rm -p 5001:5001 -h server-manager-container --name server-manager-container --network mynetwork -v server-manager-root:/tmp/server-manager-root ${{ github.repository_owner }}/server-manager:devel &
           timeout 20 bash -c 'while ! nc -q0 127.0.0.1 5001 < /dev/null > /dev/null 2>&1; do sleep 1; done'
-          docker run --platform linux/arm64 --rm -u cartesi:cartesi -h test-container --name test-container --network mynetwork -v /tmp/cartesi-machine-images:${{ env.CARTESI_IMAGES_PATH }} -v server-manager-root:/tmp/server-manager-root ${{ github.repository_owner }}/server-manager:installer make run-test-server-manager FAST_TEST=true MANAGER_ADDRESS=server-manager-container:5001
+          docker run --platform linux/${{ matrix.arch }} --rm -u cartesi:cartesi -h test-container --name test-container --network mynetwork -v /tmp/cartesi-machine-images:${{ env.CARTESI_IMAGES_PATH }} -v server-manager-root:/tmp/server-manager-root ${{ github.repository_owner }}/server-manager:installer make run-test-server-manager MANAGER_ADDRESS=server-manager-container:5001
           docker kill server-manager-container
 
-  test-echo-dapp-amd64:
-    name: Test with rollup-init echo-dapp (AMD64)
-    needs: build
-    runs-on: ubuntu-22.04
-    steps:
-      - name: Checkout server-manager source code
-        uses: actions/checkout@v3
-        with:
-          submodules: recursive
-
-      - name: Login to Docker Hub
-        uses: docker/login-action@v2
-        with:
-          username: ${{ secrets.DOCKER_USERNAME }}
-          password: ${{ secrets.DOCKER_PASSWORD }}
-
-      - name: Login to GitHub Container Registry
-        uses: docker/login-action@v2
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Set up QEMU
-        uses: docker/setup-qemu-action@v2
-
-      - name: Set up Depot CLI
-        uses: depot/setup-action@v1
-
-      - name: Build Debian based docker image
-        uses: depot/build-push-action@v1
-        with:
-          file: Dockerfile
-          context: .
-          platforms: linux/amd64
-          tags: ${{ github.repository_owner }}/server-manager:devel
-          push: false
-          load: true
-          cache-from: type=gha,scope=debian
-          cache-to: type=gha,mode=max,scope=debian
-          build-args: |
-            RELEASE=${{ (startsWith(github.ref, 'refs/tags/v') && 'yes' || 'no') }}
-            EMULATOR_REPOSITORY=${{ env.EMULATOR_REPOSITORY }}
-            EMULATOR_TAG=${{ env.EMULATOR_TAG }}
-          project: ${{ vars.DEPOT_PROJECT }}
-
-      - name: Build installer stage docker image
-        uses: depot/build-push-action@v1
-        with:
-          file: Dockerfile
-          context: .
-          target: installer
-          platforms: linux/amd64
-          tags: ${{ github.repository_owner }}/server-manager:installer
-          push: false
-          load: true
-          cache-from: type=gha,scope=debian-installer
-          cache-to: type=gha,mode=max,scope=debian-installer
-          build-args: |
-            RELEASE=${{ (startsWith(github.ref, 'refs/tags/v') && 'yes' || 'no') }}
-            EMULATOR_REPOSITORY=${{ env.EMULATOR_REPOSITORY }}
-            EMULATOR_TAG=${{ env.EMULATOR_TAG }}
-          project: ${{ vars.DEPOT_PROJECT }}
-
-      - name: Download [rootfs.ext2]
-        uses: Legion2/download-release-action@v2.1.0
-        with:
-          repository: ${{ github.repository_owner }}/image-rootfs
-          tag: ${{ env.ROOTFS_VERSION }}
-          file: rootfs-${{ env.ROOTFS_VERSION }}.ext2
-
-      - name: Download [kernel.bin]
-        uses: Legion2/download-release-action@v2.1.0
-        with:
-          repository: ${{ github.repository_owner }}/image-kernel
-          tag: ${{ env.KERNEL_VERSION }}
-          file: linux-${{ env.LINUX_VERSION }}.bin
-
-      - name: Download [rom.bin]
-        uses: Legion2/download-release-action@v2.1.0
-        with:
-          repository: ${{ github.repository_owner }}/machine-emulator-rom
-          tag: ${{ env.ROM_VERSION }}
-          file: rom-${{ env.ROM_VERSION }}.bin
-
-      - name: Move images to cartesi images folder
-        run: |
-          mkdir -m 755 -p /tmp/cartesi-machine-images
-          mv rom-*.bin linux-*.bin rootfs-*.ext2 /tmp/cartesi-machine-images/
-          cd /tmp/cartesi-machine-images/ && ln -s linux-${{ env.LINUX_VERSION }}.bin linux.bin
-          cd /tmp/cartesi-machine-images/ && ln -s rom-${{ env.ROM_VERSION }}.bin rom.bin
-          cd /tmp/cartesi-machine-images/ && ln -s rootfs-${{ env.ROOTFS_VERSION }}.ext2 rootfs.ext2
-
-      - name: Run test suite inside the docker image (Linux/AMD64)
-        run: |
-          docker volume create --name server-manager-root
-          docker network create mynetwork
-          docker run --rm -v server-manager-root:/tmp/server-manager-root ${{ github.repository_owner }}/server-manager:installer chown -R cartesi:cartesi /tmp/server-manager-root
-          docker run --rm -u cartesi:cartesi -v /tmp/cartesi-machine-images:${{ env.CARTESI_IMAGES_PATH }} -v server-manager-root:/tmp/server-manager-root ${{ github.repository_owner }}/server-manager:installer make create-machines rollup_init=yes
-          docker run --rm -p 5001:5001 -h server-manager-container --name server-manager-container --network mynetwork -v server-manager-root:/tmp/server-manager-root ${{ github.repository_owner }}/server-manager:devel &
-          timeout 20 bash -c 'while ! nc -q0 127.0.0.1 5001 < /dev/null > /dev/null 2>&1; do sleep 1; done'
-          docker run --rm -u cartesi:cartesi -h test-container --name test-container --network mynetwork -v /tmp/cartesi-machine-images:${{ env.CARTESI_IMAGES_PATH }} -v server-manager-root:/tmp/server-manager-root ${{ github.repository_owner }}/server-manager:installer make run-test-server-manager MANAGER_ADDRESS=server-manager-container:5001
-          docker kill server-manager-container
-
-  test-echo-dapp-arm64:
-    name: Test with rollup-init echo-dapp (ARM64)
-    needs: build
-    runs-on: ubuntu-22.04
-    steps:
-      - name: Checkout server-manager source code
-        uses: actions/checkout@v3
-        with:
-          submodules: recursive
-
-      - name: Login to Docker Hub
-        uses: docker/login-action@v2
-        with:
-          username: ${{ secrets.DOCKER_USERNAME }}
-          password: ${{ secrets.DOCKER_PASSWORD }}
-
-      - name: Login to GitHub Container Registry
-        uses: docker/login-action@v2
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Set up QEMU
-        uses: docker/setup-qemu-action@v2
-
-      - name: Set up Depot CLI
-        uses: depot/setup-action@v1
-
-      - name: Build Debian based docker image
-        uses: depot/build-push-action@v1
-        with:
-          file: Dockerfile
-          context: .
-          platforms: linux/arm64
-          tags: ${{ github.repository_owner }}/server-manager:devel
-          push: false
-          load: true
-          cache-from: type=gha,scope=debian
-          cache-to: type=gha,mode=max,scope=debian
-          build-args: |
-            RELEASE=${{ (startsWith(github.ref, 'refs/tags/v') && 'yes' || 'no') }}
-            EMULATOR_REPOSITORY=${{ env.EMULATOR_REPOSITORY }}
-            EMULATOR_TAG=${{ env.EMULATOR_TAG }}
-          project: ${{ vars.DEPOT_PROJECT }}
-
-      - name: Build installer stage docker image
-        uses: depot/build-push-action@v1
-        with:
-          file: Dockerfile
-          context: .
-          target: installer
-          platforms: linux/arm64
-          tags: ${{ github.repository_owner }}/server-manager:installer
-          push: false
-          load: true
-          cache-from: type=gha,scope=debian-installer
-          cache-to: type=gha,mode=max,scope=debian-installer
-          build-args: |
-            RELEASE=${{ (startsWith(github.ref, 'refs/tags/v') && 'yes' || 'no') }}
-            EMULATOR_REPOSITORY=${{ env.EMULATOR_REPOSITORY }}
-            EMULATOR_TAG=${{ env.EMULATOR_TAG }}
-          project: ${{ vars.DEPOT_PROJECT }}
-
-      - name: Download [rootfs.ext2]
-        uses: Legion2/download-release-action@v2.1.0
-        with:
-          repository: ${{ github.repository_owner }}/image-rootfs
-          tag: ${{ env.ROOTFS_VERSION }}
-          file: rootfs-${{ env.ROOTFS_VERSION }}.ext2
-
-      - name: Download [kernel.bin]
-        uses: Legion2/download-release-action@v2.1.0
-        with:
-          repository: ${{ github.repository_owner }}/image-kernel
-          tag: ${{ env.KERNEL_VERSION }}
-          file: linux-${{ env.LINUX_VERSION }}.bin
-
-      - name: Download [rom.bin]
-        uses: Legion2/download-release-action@v2.1.0
-        with:
-          repository: ${{ github.repository_owner }}/machine-emulator-rom
-          tag: ${{ env.ROM_VERSION }}
-          file: rom-${{ env.ROM_VERSION }}.bin
-
-      - name: Move images to cartesi images folder
-        run: |
-          mkdir -m 755 -p /tmp/cartesi-machine-images
-          mv rom-*.bin linux-*.bin rootfs-*.ext2 /tmp/cartesi-machine-images/
-          cd /tmp/cartesi-machine-images/ && ln -s linux-${{ env.LINUX_VERSION }}.bin linux.bin
-          cd /tmp/cartesi-machine-images/ && ln -s rom-${{ env.ROM_VERSION }}.bin rom.bin
-          cd /tmp/cartesi-machine-images/ && ln -s rootfs-${{ env.ROOTFS_VERSION }}.ext2 rootfs.ext2
-
-      - name: Run test suite inside the docker image (Linux/ARM64)
-        run: |
-          docker volume create --name server-manager-root
-          docker network create mynetwork
-          docker run --platform linux/arm64 --rm -v server-manager-root:/tmp/server-manager-root ${{ github.repository_owner }}/server-manager:installer chown -R cartesi:cartesi /tmp/server-manager-root
-          docker run --platform linux/arm64 --rm -u cartesi:cartesi -v /tmp/cartesi-machine-images:${{ env.CARTESI_IMAGES_PATH }} -v server-manager-root:/tmp/server-manager-root ${{ github.repository_owner }}/server-manager:installer make create-machines rollup_init=yes
-          docker run --platform linux/arm64 --rm -p 5001:5001 -h server-manager-container --name server-manager-container --network mynetwork -v server-manager-root:/tmp/server-manager-root ${{ github.repository_owner }}/server-manager:devel &
-          timeout 20 bash -c 'while ! nc -q0 127.0.0.1 5001 < /dev/null > /dev/null 2>&1; do sleep 1; done'
-          docker run --platform linux/arm64 --rm -u cartesi:cartesi -h test-container --name test-container --network mynetwork -v /tmp/cartesi-machine-images:${{ env.CARTESI_IMAGES_PATH }} -v server-manager-root:/tmp/server-manager-root ${{ github.repository_owner }}/server-manager:installer make run-test-server-manager FAST_TEST=true MANAGER_ADDRESS=server-manager-container:5001
-          docker kill server-manager-container
 
   static-analysis:
     name: Static Analysis
@@ -523,7 +323,7 @@ jobs:
 
   release:
     name: Publish Docker image
-    needs: [build, test-ioctl-echo-loop-amd64, test-echo-dapp-amd64, test-ioctl-echo-loop-arm64, test-echo-dapp-arm64, static-analysis]
+    needs: [build, test-ioctl-echo-loop, test-echo-dapp, static-analysis]
     runs-on: ubuntu-22.04
     steps:
       - name: Checkout server-manager source code
