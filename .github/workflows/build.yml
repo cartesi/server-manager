@@ -59,7 +59,11 @@ jobs:
   test-ioctl-echo-loop:
     strategy:
       matrix:
-        arch: ["amd64", "arm64"]
+        include:
+          - arch: "amd64"
+            fast: false
+          - arch: "arm64"
+            fast: true
     name: Test with ioctl-echo-loop (${{ matrix.arch }})
     needs: build
     runs-on: ubuntu-22.04
@@ -160,13 +164,17 @@ jobs:
           docker run --platform linux/${{ matrix.arch }} --rm -u cartesi:cartesi -v /tmp/cartesi-machine-images:${{ env.CARTESI_IMAGES_PATH }} -v server-manager-root:/tmp/server-manager-root ${{ github.repository_owner }}/server-manager:installer make create-machines
           docker run --platform linux/${{ matrix.arch }} --rm -p 5001:5001 -h server-manager-container --name server-manager-container --network mynetwork -v server-manager-root:/tmp/server-manager-root ${{ github.repository_owner }}/server-manager:devel &
           timeout 20 bash -c 'while ! nc -q0 127.0.0.1 5001 < /dev/null > /dev/null 2>&1; do sleep 1; done'
-          docker run --platform linux/${{ matrix.arch }} --rm -u cartesi:cartesi -h test-container --name test-container --network mynetwork -v /tmp/cartesi-machine-images:${{ env.CARTESI_IMAGES_PATH }} -v server-manager-root:/tmp/server-manager-root ${{ github.repository_owner }}/server-manager:installer make run-test-server-manager MANAGER_ADDRESS=server-manager-container:5001
+          docker run --platform linux/${{ matrix.arch }} --rm -u cartesi:cartesi -h test-container --name test-container --network mynetwork -v /tmp/cartesi-machine-images:${{ env.CARTESI_IMAGES_PATH }} -v server-manager-root:/tmp/server-manager-root ${{ github.repository_owner }}/server-manager:installer make run-test-server-manager FAST_TEST=${{ matrix.fast }}  MANAGER_ADDRESS=server-manager-container:5001
           docker kill server-manager-container
 
   test-echo-dapp:
     strategy:
       matrix:
-        arch: ["amd64", "arm64"]
+        include:
+          - arch: "amd64"
+            fast: false
+          - arch: "arm64"
+            fast: true
     name: Test with rollup-init echo-dapp (${{ matrix.arch }})
     needs: build
     runs-on: ubuntu-22.04
@@ -267,7 +275,7 @@ jobs:
           docker run --platform linux/${{ matrix.arch }} --rm -u cartesi:cartesi -v /tmp/cartesi-machine-images:${{ env.CARTESI_IMAGES_PATH }} -v server-manager-root:/tmp/server-manager-root ${{ github.repository_owner }}/server-manager:installer make create-machines rollup_init=yes
           docker run --platform linux/${{ matrix.arch }} --rm -p 5001:5001 -h server-manager-container --name server-manager-container --network mynetwork -v server-manager-root:/tmp/server-manager-root ${{ github.repository_owner }}/server-manager:devel &
           timeout 20 bash -c 'while ! nc -q0 127.0.0.1 5001 < /dev/null > /dev/null 2>&1; do sleep 1; done'
-          docker run --platform linux/${{ matrix.arch }} --rm -u cartesi:cartesi -h test-container --name test-container --network mynetwork -v /tmp/cartesi-machine-images:${{ env.CARTESI_IMAGES_PATH }} -v server-manager-root:/tmp/server-manager-root ${{ github.repository_owner }}/server-manager:installer make run-test-server-manager MANAGER_ADDRESS=server-manager-container:5001
+          docker run --platform linux/${{ matrix.arch }} --rm -u cartesi:cartesi -h test-container --name test-container --network mynetwork -v /tmp/cartesi-machine-images:${{ env.CARTESI_IMAGES_PATH }} -v server-manager-root:/tmp/server-manager-root ${{ github.repository_owner }}/server-manager:installer make run-test-server-manager FAST_TEST=${{ matrix.fast }} MANAGER_ADDRESS=server-manager-container:5001
           docker kill server-manager-container
 
 
