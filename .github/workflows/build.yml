@@ -2,7 +2,7 @@ name: Build/Test/Release
 on: [push]
 env:
   EMULATOR_REPOSITORY: cartesi/machine-emulator
-  EMULATOR_TAG: 0.15.0
+  EMULATOR_TAG: 0.15.1
   ROM_VERSION: v0.17.0
   KERNEL_VERSION: v0.17.0
   LINUX_VERSION: 5.15.63-ctsi-2-v0.17.0
