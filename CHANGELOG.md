@@ -6,6 +6,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.2] - 2023-08-21
+### Changed
+- Updated server-manager version to v0.8.2
+- Updated machine-emulator base image to v0.15.2
+
 ## [0.8.1] - 2023-08-17
 ### Changed
 - Updated server-manager version to v0.8.1
@@ -30,7 +35,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The creation of test machines was extracted from the test-server-manager to a lua script
 - The license changed to Apache license 2.0
 
-[Unreleased]: https://github.com/cartesi/server-manager/compare/v0.8.1...HEAD
+[Unreleased]: https://github.com/cartesi/server-manager/compare/v0.8.2...HEAD
+[0.8.2]: https://github.com/cartesi/server-manager/releases/tag/v0.8.2
 [0.8.1]: https://github.com/cartesi/server-manager/releases/tag/v0.8.1
 [0.8.0]: https://github.com/cartesi/server-manager/releases/tag/v0.8.0
 [0.7.0]: https://github.com/cartesi/server-manager/releases/tag/v0.7.0
