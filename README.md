@@ -29,7 +29,7 @@ Cleaning targets:
 - GNU Make >= 3.81
 - GRPC 1.50.0
 - Lua 5.4.x
-- Boost >= 1.71
+- Boost >= 1.81
 
 Obs: Please note that Apple Clang Version number does not follow upstream LLVM/Clang.
 
@@ -42,7 +42,7 @@ sudo apt-get install build-essential wget git libreadline-dev libboost-coroutine
 
 ##### MacPorts
 ```
-sudo port install clang-15 automake boost libtool wget cmake pkgconfig c-ares zlib openssl lua54 grpc
+sudo port install clang-16 automake boost libtool wget cmake pkgconfig c-ares zlib openssl lua54 grpc
 ```
 
 For `create-machines.lua` script to work it is expected that `lua5.4` binary is available in the system PATH. If operating system/package manager that you are using provides only `lua` or lua binary named in a different way, please create symbolic link or alias `lua5.4`.
@@ -90,11 +90,11 @@ We use clang-tidy 15 as the linter.
 
 #### Debian Bookworm
 
-You need to install the package clang-tidy-15 and set it as the default executable with update-alternatives.
+You need to install the package clang-tidy-16 and set it as the default executable with update-alternatives.
 
 ```bash
-$ apt install clang-tidy-15
-$ update-alternatives --install /usr/bin/clang-tidy clang-tidy /usr/bin/clang-tidy-15 120
+$ apt install clang-tidy-16
+$ update-alternatives --install /usr/bin/clang-tidy clang-tidy /usr/bin/clang-tidy-16 120
 ```
 
 ### Running Lint
@@ -111,11 +111,11 @@ We use clang-format to format the code base.
 
 #### Debian Bookworm
 
-You need to install the package clang-format-15 and set is as the default executable with update-alternatives.
+You need to install the package clang-format-16 and set is as the default executable with update-alternatives.
 
 ```bash
-$ apt install clang-format-15
-$ update-alternatives --install /usr/bin/clang-format clang-format /usr/bin/clang-format-15 120
+$ apt install clang-format-16
+$ update-alternatives --install /usr/bin/clang-format clang-format /usr/bin/clang-format-16 120
 ```
 
 ### Formatting code

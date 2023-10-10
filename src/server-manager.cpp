@@ -78,30 +78,18 @@
 #pragma clang diagnostic pop
 #endif
 
-#include <htif-defines.h>
-
 #include "complete-merkle-tree.h"
+#include "htif-defines.h"
 #include "keccak-256-hasher.h"
 #include "merkle-tree-proof.h"
 #include "protobuf-util.h"
-
-/// \brief HTIF yield reasons
-enum HTIF_yield_reason : uint64_t {
-    HTIF_YIELD_REASON_PROGRESS = HTIF_YIELD_REASON_PROGRESS_DEF,
-    HTIF_YIELD_REASON_RX_ACCEPTED = HTIF_YIELD_REASON_RX_ACCEPTED_DEF,
-    HTIF_YIELD_REASON_RX_REJECTED = HTIF_YIELD_REASON_RX_REJECTED_DEF,
-    HTIF_YIELD_REASON_TX_VOUCHER = HTIF_YIELD_REASON_TX_VOUCHER_DEF,
-    HTIF_YIELD_REASON_TX_NOTICE = HTIF_YIELD_REASON_TX_NOTICE_DEF,
-    HTIF_YIELD_REASON_TX_REPORT = HTIF_YIELD_REASON_TX_REPORT_DEF,
-    HTIF_YIELD_REASON_TX_EXCEPTION = HTIF_YIELD_REASON_TX_EXCEPTION_DEF,
-};
 
 constexpr const uint64_t ROLLUP_ADVANCE_STATE = 0;
 constexpr const uint64_t ROLLUP_INSPECT_STATE = 1;
 
 static constexpr uint32_t manager_version_major = 0;
-static constexpr uint32_t manager_version_minor = 8;
-static constexpr uint32_t manager_version_patch = 3;
+static constexpr uint32_t manager_version_minor = 9;
+static constexpr uint32_t manager_version_patch = 0;
 static constexpr const char *manager_version_pre_release = "";
 static constexpr const char *manager_version_build = "";
 
@@ -1554,25 +1542,25 @@ void trigger_and_wait_checkin(handler_context &hctx, async_context &actx, T trig
 /// \param data New data field
 /// \return Register value with replaced data field
 static constexpr uint64_t htif_replace_data_field(uint64_t reg, uint64_t data) {
-    return (reg & (~HTIF_DATA_MASK_DEF)) | ((data << HTIF_DATA_SHIFT_DEF) & HTIF_DATA_MASK_DEF);
+    return (reg & (~HTIF_DATA_MASK)) | ((data << HTIF_DATA_SHIFT) & HTIF_DATA_MASK);
 }
 
 /// \brief Obtains the dev field in HTIF's fromhost/tohost register value
 /// \return Dev data field in register
 static constexpr uint64_t htif_dev_field(uint64_t reg) {
-    return (reg & HTIF_DEV_MASK_DEF) >> HTIF_DEV_SHIFT_DEF;
+    return (reg & HTIF_DEV_MASK) >> HTIF_DEV_SHIFT;
 }
 
 /// \brief Extracts the cmd field in HTIF's fromhost/tohost register value
 /// \return cmd data field in register
 static constexpr uint64_t htif_cmd_field(uint64_t reg) {
-    return (reg & HTIF_CMD_MASK_DEF) >> HTIF_CMD_SHIFT_DEF;
+    return (reg & HTIF_CMD_MASK) >> HTIF_CMD_SHIFT;
 }
 
 /// \brief Extracts the data field in HTIF's fromhost/tohost register value
 /// \return cmd data field in register
 static constexpr uint64_t htif_data_field(uint64_t reg) {
-    return (reg & HTIF_DATA_MASK_DEF) >> HTIF_DATA_SHIFT_DEF;
+    return (reg & HTIF_DATA_MASK) >> HTIF_DATA_SHIFT;
 }
 
 /// \brief Checks if HTIF's tohost/fromhost matches an yield device manual command
@@ -1581,15 +1569,15 @@ static constexpr uint64_t htif_data_field(uint64_t reg) {
 /// \param value Register value
 static void check_htif_yield_manual(async_context &actx, const std::string &regname, uint64_t value) {
     auto dev = htif_dev_field(value);
-    if (dev != HTIF_DEVICE_YIELD_DEF) {
+    if (dev != HTIF_DEVICE_YIELD) {
         THROW((taint_session{actx.session, grpc::StatusCode::INTERNAL,
-            "invalid dev field in " + regname + " (expected " + std::to_string(HTIF_DEVICE_YIELD_DEF) + ", got " +
+            "invalid dev field in " + regname + " (expected " + std::to_string(HTIF_DEVICE_YIELD) + ", got " +
                 std::to_string(dev) + ")"}));
     }
     auto cmd = htif_cmd_field(value);
-    if (cmd != HTIF_YIELD_MANUAL_DEF) {
+    if (cmd != HTIF_YIELD_MANUAL) {
         THROW((taint_session{actx.session, grpc::StatusCode::INTERNAL,
-            "invalid cmd field in " + regname + " (expected " + std::to_string(HTIF_YIELD_MANUAL_DEF) + ", got " +
+            "invalid cmd field in " + regname + " (expected " + std::to_string(HTIF_YIELD_MANUAL) + ", got " +
                 std::to_string(cmd) + ")"}));
     }
 }
@@ -1598,10 +1586,10 @@ static void check_htif_yield_manual(async_context &actx, const std::string &regn
 /// \param value Register value
 static void check_yield_reason_accepted(uint64_t value) {
     auto data = htif_data_field(value) << 16 >> 48;
-    if (data != HTIF_YIELD_REASON_RX_ACCEPTED_DEF) {
+    if (data != HTIF_YIELD_REASON_RX_ACCEPTED) {
         THROW((finish_error_yield_none{grpc::StatusCode::INVALID_ARGUMENT,
-            "invalid data field in htif.tohost (expected " + std::to_string(HTIF_YIELD_REASON_RX_ACCEPTED_DEF) +
-                ", got " + std::to_string(data) + ")"}));
+            "invalid data field in htif.tohost (expected " + std::to_string(HTIF_YIELD_REASON_RX_ACCEPTED) + ", got " +
+                std::to_string(data) + ")"}));
     }
 }
 
@@ -3282,11 +3270,19 @@ where
       passed to the spawned remote cartesi machine
       default: localhost:0
 
+    --version
+      prints the server version number
+
     --help
       prints this message and exits
 
 )",
         name);
+}
+
+/// \brief Prints server_manager version
+static void print_version() {
+    (void) fprintf(stderr, "%d.%d.%d\n", manager_version_major, manager_version_minor, manager_version_patch);
 }
 
 /// \brief Checks if string matches prefix and captures remaninder
@@ -3345,6 +3341,9 @@ int main(int argc, char *argv[]) try {
             ;
         } else if (stringval("--server-address=", argv[i], &server_address)) {
             ;
+        } else if (strcmp(argv[i], "--version") == 0) {
+            print_version();
+            exit(0);
         } else if (strcmp(argv[i], "--help") == 0) {
             help(argv[0]);
             exit(0);

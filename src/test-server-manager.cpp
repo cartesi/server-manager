@@ -565,12 +565,12 @@ void assert_bool(bool value, const std::string &msg, const std::string &file, in
 #define ASSERT_STATUS_CODE(s, f, v) assert_status_code(s, f, v, __FILE__, __LINE__)
 
 static void test_get_version(const std::function<void(const std::string &title, test_function f)> &test) {
-    test("The server-manager server version should be 0.8.x", [](ServerManagerClient &manager) {
+    test("The server-manager server version should be 0.9.x", [](ServerManagerClient &manager) {
         Versioning::GetVersionResponse response;
         Status status = manager.get_version(response);
         ASSERT_STATUS(status, "GetVersion", true);
         ASSERT((response.version().major() == 0), "Version Major should be 0");
-        ASSERT((response.version().minor() == 8), "Version Minor should be 8");
+        ASSERT((response.version().minor() == 9), "Version Minor should be 9");
     });
 }
 
@@ -654,22 +654,6 @@ static void test_start_session(const std::function<void(const std::string &title
             ASSERT_STATUS(status, "StartSession", false);
             ASSERT_STATUS_CODE(status, "StartSession", StatusCode::INVALID_ARGUMENT);
         });
-
-    test("Should fail to complete when config.htif.yield_manual = false", [](ServerManagerClient &manager) {
-        StartSessionRequest session_request = create_valid_start_session_request("no-manual-yield-machine");
-        StartSessionResponse session_response;
-        Status status = manager.start_session(session_request, session_response);
-        ASSERT_STATUS(status, "StartSession", false);
-        ASSERT_STATUS_CODE(status, "StartSession", StatusCode::INVALID_ARGUMENT);
-    });
-
-    test("Should fail to complete when config.htif.yield_automatic = false", [](ServerManagerClient &manager) {
-        StartSessionRequest session_request = create_valid_start_session_request("no-automatic-yield-machine");
-        StartSessionResponse session_response;
-        Status status = manager.start_session(session_request, session_response);
-        ASSERT_STATUS(status, "StartSession", false);
-        ASSERT_STATUS_CODE(status, "StartSession", StatusCode::INVALID_ARGUMENT);
-    });
 
     test("Should fail to complete when config.htif.console_getchar = true", [](ServerManagerClient &manager) {
         StartSessionRequest session_request = create_valid_start_session_request("console-getchar-machine");
@@ -3126,16 +3110,17 @@ static void test_inspect_state(const std::function<void(const std::string &title
 
 static bool check_session_store(const std::string &machine_dir) {
     static const std::vector<std::string> files = {
-        "hash", "config.protobuf",
-        "0000000000001000-f000.bin",    // rom
+        "hash", "config.json",
         "0000000000020000-6000.bin",    // shadow tlb
+        "0000000000600000-200000.bin",  // uarch-ram
         "0000000060000000-200000.bin",  // rollup rx buffer
         "0000000060200000-200000.bin",  // rollup tx buffer
         "0000000060400000-1000.bin",    // rollup input metadata
         "0000000060600000-200000.bin",  // rollup voucher hashes
         "0000000060800000-200000.bin",  // rollup notice hashes
+        "000000007ff00000-100000.bin",  // dtb
         "0000000080000000-4000000.bin", // ram
-        "0080000000000000-4400000.bin"  // root drive
+        "0080000000000000-6400000.bin"  // root drive
     };
     if (machine_dir.empty()) {
         return false;

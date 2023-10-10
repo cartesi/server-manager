@@ -37,7 +37,7 @@ HEALTHCHECK_PROTO := third-party/health.proto
 
 # Docker image settings
 TAG ?= devel
-EMULATOR_TAG ?= 0.15.3
+EMULATOR_TAG ?= 0.16.0
 EMULATOR_REPOSITORY ?= cartesi/machine-emulator
 
 # Mac OS X specific settings
@@ -109,7 +109,7 @@ $(SERVER_MANAGER_PROTO):
 	@exit 1
 
 test server-manager: | $(SERVER_MANAGER_PROTO) $(HEALTHCHECK_PROTO)
-test lint coverage-report check-format format server-manager create-machines create-and-test clean-machines run-test-server-manager:
+test lint coverage-report check-format format server-manager create-machines create-and-test clean-machines clean-test-processes run-test-server-manager:
 	@eval $$($(MAKE) -s --no-print-directory env); $(MAKE) -C $(SRCDIR) $@
 
 source-default: | $(SERVER_MANAGER_PROTO) checksum

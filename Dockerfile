@@ -1,5 +1,5 @@
 ARG EMULATOR_REPOSITORY=cartesi/machine-emulator
-ARG EMULATOR_TAG=0.15.3
+ARG EMULATOR_TAG=0.16.0
 ARG RELEASE=yes
 
 FROM --platform=$TARGETPLATFORM ${EMULATOR_REPOSITORY}:${EMULATOR_TAG} as dep-builder
@@ -8,14 +8,14 @@ USER root
 
 RUN apt-get update && \
     DEBIAN_FRONTEND="noninteractive" apt-get install --no-install-recommends -y \
-        build-essential wget git \
-        libreadline-dev libboost-coroutine-dev libboost-context-dev \
-        libboost-filesystem-dev libboost-log-dev libssl-dev libc-ares-dev zlib1g-dev \
-        ca-certificates automake libtool patchelf cmake pkg-config lua5.4 liblua5.4-dev \
-        libgrpc++-dev libprotobuf-dev protobuf-compiler-grpc \
-        libcrypto++-dev clang-tidy-15 clang-format-15 && \
-    update-alternatives --install /usr/bin/clang-format clang-format /usr/bin/clang-format-15 120 && \
-    update-alternatives --install /usr/bin/clang-tidy clang-tidy /usr/bin/clang-tidy-15 120 && \
+    build-essential wget git \
+    libreadline-dev libboost-coroutine1.81-dev libboost-context1.81-dev \
+    libboost-filesystem1.81-dev libboost-log1.81-dev libssl-dev libc-ares-dev zlib1g-dev \
+    ca-certificates automake libtool patchelf cmake pkg-config lua5.4 liblua5.4-dev \
+    libgrpc++-dev libprotobuf-dev protobuf-compiler-grpc \
+    libcrypto++-dev clang-tidy-16 clang-format-16 && \
+    update-alternatives --install /usr/bin/clang-format clang-format /usr/bin/clang-format-16 120 && \
+    update-alternatives --install /usr/bin/clang-tidy clang-tidy /usr/bin/clang-tidy-16 120 && \
     rm -rf /var/lib/apt/lists/*
 
 WORKDIR /usr/src/server-manager
@@ -36,7 +36,11 @@ FROM --platform=$TARGETPLATFORM ${EMULATOR_REPOSITORY}:${EMULATOR_TAG}
 USER root
 
 RUN apt-get update && DEBIAN_FRONTEND="noninteractive" apt-get install -y \
-    libboost-log1.74.0 \
+    libboost-coroutine1.81.0 \
+    libboost-context1.81.0 \
+    libboost-filesystem1.81.0 \
+    libboost-log1.81.0 \
+    libcrypto++8 \
     && rm -rf /var/lib/apt/lists/*
 
 COPY --from=installer /usr/bin/server-manager /usr/bin/server-manager
