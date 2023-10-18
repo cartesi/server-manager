@@ -36,8 +36,8 @@ SERVER_MANAGER_PROTO := lib/grpc-interfaces/server-manager.proto
 HEALTHCHECK_PROTO := third-party/health.proto
 
 # Docker image settings
-TAG ?= devel
-EMULATOR_TAG ?= 0.15.2
+TAG ?= lambadex
+EMULATOR_TAG ?= lambadex
 EMULATOR_REPOSITORY ?= cartesi/machine-emulator
 
 # Mac OS X specific settings
