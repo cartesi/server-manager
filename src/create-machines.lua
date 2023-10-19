@@ -123,9 +123,8 @@ function create_default_config(images_dir, command)
         length = 0x4000000,
         image_filename = images_dir .. "linux.bin",
       },
-      rom = {
-        image_filename = images_dir .. "rom.bin",
-        bootargs = "console=hvc0 rootfstype=ext2 root=/dev/mtdblock0 rw quiet swiotlb=noforce splash=no mtdparts=flash.0:-(root) init=/opt/cartesi/bin/init " .. command,
+      dtb = {
+        bootargs = "console=hvc0 rootfstype=ext2 root=/dev/mtdblock0 rw quiet swiotlb=noforce splash=no mtdparts=flash.0:-(root) init=/opt/cartesi/bin/init random.trust_bootloader=on " .. command,
       },
       htif = {
         console_getchar = false, -- default
