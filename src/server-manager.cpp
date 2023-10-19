@@ -19,7 +19,10 @@
 #include <chrono>
 #include <cstdint>
 #include <deque>
+#include <filesystem>
+#include <fstream>
 #include <iomanip>
+#include <iostream>
 #include <map>
 #include <new>
 #include <optional>
@@ -417,6 +420,9 @@ struct session_type {
     cycles_config_type server_cycles;             ///< Cycle count limits for various server tasks
     boost::process::group server_process_group{}; ///< remote-cartesi-machine process group
     std::string server_address{};                 ///< remote-cartesi-machine address
+    uint64_t raw_input_count{};                   ///< Number of received inputs on this session
+    uint64_t raw_query_count{};                   ///< Number of received queries on this session
+    bool dump{};                                  ///< Dump session inputs
 };
 
 /// \brief Encodes an input metadata structure according to the EVM ABI
@@ -509,6 +515,7 @@ struct handler_context {
     grpc::health::v1::Health::AsyncService health_async_service;   ///< Assynchronous health check service
     std::unique_ptr<grpc::ServerCompletionQueue> completion_queue; ///< Completion queue where all handlers arrive
     bool ok;                                                       ///< gRPC status of requests arriving in queue
+    bool dump;                                                     ///< Dump session inputs
 };
 
 /// \brief Context for internal functions that need to perform async operations
@@ -1772,6 +1779,8 @@ static handler_type::pull_type *new_StartSession_handler(handler_context &hctx) 
                 THROW((finish_error_yield_none{StatusCode::INVALID_ARGUMENT,
                     "max cycles per inspect state is less than cycles per inspect state increment"}));
             }
+            // Set session dump
+            session.dump = hctx.dump;
             // Wait for machine server to checkin after spawned
             async_context actx{session, request_context, cq, self, yield};
             trigger_and_wait_checkin(hctx, actx, [](handler_context &hctx, async_context &actx) {
@@ -1830,6 +1839,21 @@ static handler_type::pull_type *new_StartSession_handler(handler_context &hctx) 
     return self;
 }
 
+// Function to write a buffer to a file
+static void write_data_to_file(const std::string *data, const std::string &session_id, const std::string &input_name,
+    uint64_t counter) {
+    const std::string directoryPath("/tmp/server-manager/session-dump" + session_id);
+    std::string filename = directoryPath + "/" + input_name + "-" + std::to_string(counter) + ".bin";
+    std::filesystem::create_directories(directoryPath);
+    std::ofstream out(filename, std::ios::binary);
+    if (out.is_open()) {
+        out.write(data->c_str(), data->size());
+        out.close();
+    } else {
+        BOOST_LOG_TRIVIAL(error) << "Error opening file " << filename << std::endl;
+    }
+}
+
 /// \brief Asynchronously clears the rx buffer, input metadata, voucher hashes, and notice hashes memory ranges
 /// \param actx Context for async operations
 static void clear_memory_ranges(async_context &actx) {
@@ -1882,7 +1906,8 @@ static void clear_rx_buffer(async_context &actx) {
 /// \param end One past last byte to write
 /// \param drive MemoryRangeConfig describing drive
 template <typename IT>
-static void write_memory_range(async_context &actx, IT begin, IT end, const MemoryRangeConfig &drive) {
+static void write_memory_range(async_context &actx, IT begin, IT end, const MemoryRangeConfig &drive,
+    const std::string &input_name) {
     WriteMemoryRequest write_request;
     write_request.set_address(drive.start());
     auto *data = write_request.mutable_data();
@@ -1897,6 +1922,9 @@ static void write_memory_range(async_context &actx, IT begin, IT end, const Memo
     if (!write_status.ok()) {
         THROW((taint_session{actx.session, std::move(write_status)}));
     }
+    if (actx.session.dump) {
+        write_data_to_file(data, actx.session.id, input_name, actx.session.raw_input_count);
+    }
 }
 
 /// \brief Asynchronously writes an EVM ABI string to a memory range
@@ -1905,7 +1933,8 @@ static void write_memory_range(async_context &actx, IT begin, IT end, const Memo
 /// \param end One past last byte to write
 /// \param drive MemoryRangeConfig describing drive
 template <typename IT>
-static void write_evm_abi_string(async_context &actx, IT begin, IT end, const MemoryRangeConfig &drive) {
+static void write_evm_abi_string(async_context &actx, IT begin, IT end, const MemoryRangeConfig &drive,
+    const std::string &input_name, uint64_t raw_input_count) {
     using namespace boost::endian;
     WriteMemoryRequest write_request;
     write_request.set_address(drive.start());
@@ -1927,6 +1956,9 @@ static void write_evm_abi_string(async_context &actx, IT begin, IT end, const Me
     actx.yield(side_effect::none);
     if (!write_status.ok()) {
         THROW((taint_session{actx.session, std::move(write_status)}));
+    }
+    if (actx.session.dump) {
+        write_data_to_file(data, actx.session.id, input_name, raw_input_count);
     }
 }
 
@@ -2404,7 +2436,9 @@ static void process_pending_query(handler_context &hctx, async_context &actx, ep
     LOG_CONTEXT(debug, actx.request_context) << "    Clearing rx buffer";
     clear_rx_buffer(actx);
     LOG_CONTEXT(debug, actx.request_context) << "    Writing rx buffer";
-    write_evm_abi_string(actx, q.payload.begin(), q.payload.end(), actx.session.memory_range.rx_buffer.config);
+    write_evm_abi_string(actx, q.payload.begin(), q.payload.end(), actx.session.memory_range.rx_buffer.config,
+        "inspect-rx-buffer", actx.session.raw_query_count);
+    actx.session.raw_query_count++;
     LOG_CONTEXT(debug, actx.request_context) << "    Resetting iflags_Y";
     reset_iflags_y(actx);
     LOG_CONTEXT(debug, actx.request_context) << "    Setting inspect request in htif fromhost";
@@ -2512,10 +2546,13 @@ static void process_pending_inputs(handler_context &hctx, async_context &actx, e
             LOG_CONTEXT(debug, actx.request_context) << "    Clearing buffers";
             clear_memory_ranges(actx);
             LOG_CONTEXT(debug, actx.request_context) << "    Writing rx buffer";
-            write_evm_abi_string(actx, i.payload.begin(), i.payload.end(), actx.session.memory_range.rx_buffer.config);
+            write_evm_abi_string(actx, i.payload.begin(), i.payload.end(), actx.session.memory_range.rx_buffer.config,
+                "advance-rx-buffer", actx.session.raw_input_count);
             LOG_CONTEXT(debug, actx.request_context) << "    Writing input metadata";
             auto metadata = evm_abi_encoded_input_metadata(i.metadata);
-            write_memory_range(actx, metadata.begin(), metadata.end(), actx.session.memory_range.input_metadata.config);
+            write_memory_range(actx, metadata.begin(), metadata.end(), actx.session.memory_range.input_metadata.config,
+                "advance-input-metadata");
+            actx.session.raw_input_count++;
             LOG_CONTEXT(debug, actx.request_context) << "    Resetting iflags_Y";
             reset_iflags_y(actx);
             check_htif_yield_ack_data(actx, ROLLUP_ADVANCE_STATE);
@@ -3334,6 +3371,7 @@ int main(int argc, char *argv[]) try {
 
     const char *manager_address = nullptr;
     const char *server_address = "localhost:0";
+    bool dump_inputs = false;
 
     if (argc < 1) { // NOLINT: of course it could be < 1...
         std::cerr << "missing argv[0]\n";
@@ -3345,6 +3383,8 @@ int main(int argc, char *argv[]) try {
             ;
         } else if (stringval("--server-address=", argv[i], &server_address)) {
             ;
+        } else if (strcmp(argv[i], "--dump") == 0) {
+            dump_inputs = true;
         } else if (strcmp(argv[i], "--help") == 0) {
             help(argv[0]);
             exit(0);
@@ -3361,8 +3401,7 @@ int main(int argc, char *argv[]) try {
     init_logger();
     handler_context hctx{};
 
-    std::filesystem::path remote_cartesi_machine_path =
-        boost::dll::program_location().replace_filename("remote-cartesi-machine");
+    std::filesystem::path remote_cartesi_machine_path = boost::process::search_path("remote-cartesi-machine").string();
     if (!std::filesystem::exists(remote_cartesi_machine_path)) {
         remote_cartesi_machine_path = "/usr/bin/remote-cartesi-machine";
         if (!std::filesystem::exists(remote_cartesi_machine_path)) {
@@ -3374,6 +3413,7 @@ int main(int argc, char *argv[]) try {
     hctx.remote_cartesi_machine_path = remote_cartesi_machine_path;
     hctx.manager_address = manager_address;
     hctx.server_address = server_address;
+    hctx.dump = dump_inputs;
 
     BOOST_LOG_TRIVIAL(info) << "manager version is " << manager_version_major << "." << manager_version_minor << "."
                             << manager_version_patch;
