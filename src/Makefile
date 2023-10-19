@@ -56,8 +56,8 @@ BOOST_INC_Darwin=-I/usr/local/opt/boost/include
 CRYPTOPP_LIB_Darwin:=-L/usr/local/opt/cryptopp/lib -lcryptopp
 CRYPTOPP_INC_Darwin:=-I/usr/local/opt/cryptopp/include
 else # Macports installation
-BOOST_LIB_DIR_Darwin=-L/opt/local/lib
-BOOST_INC_Darwin=-I/opt/local/include
+BOOST_LIB_DIR_Darwin=-L/opt/local/libexec/boost/1.81/lib
+BOOST_INC_Darwin=-I/opt/local/libexec/boost/1.81/include
 CRYPTOPP_LIB_Darwin:=-L/opt/local/lib -lcryptopp
 CRYPTOPP_INC_Darwin:=-I/opt/local/include
 endif

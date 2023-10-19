@@ -9,8 +9,8 @@ USER root
 RUN apt-get update && \
     DEBIAN_FRONTEND="noninteractive" apt-get install --no-install-recommends -y \
         build-essential wget git \
-        libreadline-dev libboost-coroutine-dev libboost-context-dev \
-        libboost-filesystem-dev libboost-log-dev libssl-dev libc-ares-dev zlib1g-dev \
+        libreadline-dev libboost-coroutine1.81-dev libboost-context1.81-dev \
+        libboost-filesystem1.81-dev libboost-log1.81-dev libssl-dev libc-ares-dev zlib1g-dev \
         ca-certificates automake libtool patchelf cmake pkg-config lua5.4 liblua5.4-dev \
         libgrpc++-dev libprotobuf-dev protobuf-compiler-grpc \
         libcrypto++-dev clang-tidy-15 clang-format-15 && \
@@ -36,7 +36,7 @@ FROM --platform=$TARGETPLATFORM ${EMULATOR_REPOSITORY}:${EMULATOR_TAG}
 USER root
 
 RUN apt-get update && DEBIAN_FRONTEND="noninteractive" apt-get install -y \
-    libboost-log1.74.0 \
+    libboost-log1.81.0 \
     && rm -rf /var/lib/apt/lists/*
 
 COPY --from=installer /usr/bin/server-manager /usr/bin/server-manager
