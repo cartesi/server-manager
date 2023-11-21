@@ -6,10 +6,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.0] - 2024-02-09
 ### Changed
+- Updated machine-emulator base image to v0.16.0
 - Updated libboost version to 1.81
 - Updated grpc-interfaces
-- Updated machine-emulator-defines
+- Removed machine-emulator-defines
+- Look for remote-cartesi-machine in PATH
 - Bumped version to 0.9.0
 
 ### Added
@@ -53,7 +56,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The creation of test machines was extracted from the test-server-manager to a lua script
 - The license changed to Apache license 2.0
 
-[Unreleased]: https://github.com/cartesi/server-manager/compare/v0.8.3...HEAD
+[Unreleased]: https://github.com/cartesi/server-manager/compare/v0.9.0...HEAD
+[0.9.0]: https://github.com/cartesi/server-manager/releases/tag/v0.9.0
 [0.8.3]: https://github.com/cartesi/server-manager/releases/tag/v0.8.3
 [0.8.2]: https://github.com/cartesi/server-manager/releases/tag/v0.8.2
 [0.8.1]: https://github.com/cartesi/server-manager/releases/tag/v0.8.1
