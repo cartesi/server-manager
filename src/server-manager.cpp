@@ -3360,8 +3360,7 @@ int main(int argc, char *argv[]) try {
     init_logger();
     handler_context hctx{};
 
-    std::filesystem::path remote_cartesi_machine_path =
-        boost::dll::program_location().replace_filename("remote-cartesi-machine");
+    std::filesystem::path remote_cartesi_machine_path = boost::process::search_path("remote-cartesi-machine").string();
     if (!std::filesystem::exists(remote_cartesi_machine_path)) {
         remote_cartesi_machine_path = "/usr/bin/remote-cartesi-machine";
         if (!std::filesystem::exists(remote_cartesi_machine_path)) {
