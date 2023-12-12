@@ -50,16 +50,27 @@ export MACOSX_DEPLOYMENT_TARGET := $(shell sw_vers -productVersion | sed -r  "s/
 endif
 SOLDFLAGS_Darwin+=-Wl,-rpath,$(BUILDDIR)/lib -Wl,-rpath,$(CURDIR)
 # Homebrew installation
-ifneq (,$(wildcard /usr/local/opt/boost/lib))
-BOOST_LIB_DIR_Darwin=-L/usr/local/opt/boost/lib
-BOOST_INC_Darwin=-I/usr/local/opt/boost/include
-CRYPTOPP_LIB_Darwin:=-L/usr/local/opt/cryptopp/lib -lcryptopp
-CRYPTOPP_INC_Darwin:=-I/usr/local/opt/cryptopp/include
-else # Macports installation
-BOOST_LIB_DIR_Darwin=-L/opt/local/lib
-BOOST_INC_Darwin=-I/opt/local/include
-CRYPTOPP_LIB_Darwin:=-L/opt/local/lib -lcryptopp
-CRYPTOPP_INC_Darwin:=-I/opt/local/include
+ifneq (,$(shell which brew))
+BREW_PREFIX := $(shell brew --prefix)
+BOOST_LIB_DIR_Darwin=-L$(BREW_PREFIX)/lib
+BOOST_INC_Darwin=-I$(BREW_PREFIX)/include
+CRYPTOPP_LIB_Darwin:=-L$(BREW_PREFIX)/lib -lcryptopp
+CRYPTOPP_INC_Darwin:=-I$(BREW_PREFIX)/include
+PROTOBUF_LIB_Darwin:=$(shell pkg-config --libs protobuf)
+GRPC_INC_Darwin:=$(shell pkg-config --cflags-only-I grpc++)
+GRPC_LIB_Darwin:=$(shell pkg-config --libs grpc++)
+# Macports installation
+else ifneq (,$(shell which port))
+PORT_PREFIX=/opt/local
+BOOST_LIB_DIR_Darwin=-L$(PORT_PREFIX)/lib
+BOOST_INC_Darwin=-I$(PORT_PREFIX)/include
+CRYPTOPP_LIB_Darwin:=-L$(PORT_PREFIX)/lib -lcryptopp
+CRYPTOPP_INC_Darwin:=-I$(PORT_PREFIX)/include
+PROTOBUF_LIB_Darwin:=-L$(PORT_PREFIX)/lib -lprotobuf -lpthread
+GRPC_INC_Darwin=-I$(dir $(GRPC_CPP_PLUGIN))../include
+GRPC_LIB_Darwin=-L$(dir $(GRPC_CPP_PLUGIN))../lib -lgrpc++ -lgrpc -lgpr -lprotobuf -lpthread -labsl_synchronization
+else
+$(error Neither Homebrew nor MacPorts is installed)
 endif
 endif
 
@@ -67,9 +78,6 @@ BOOST_CORO_LIB_Darwin:=$(BOOST_LIB_DIR_Darwin) -lboost_coroutine-mt -lboost_cont
 BOOST_FILESYSTEM_LIB_Darwin:=$(BOOST_LIB_DIR_Darwin) -lboost_system-mt -lboost_filesystem-mt
 BOOST_LOG_LIB_Darwin:=$(BOOST_LIB_DIR_Darwin) -lboost_log-mt -lboost_log_setup-mt -lboost_thread-mt
 BOOST_PROCESS_LIB_Darwin:=-lpthread
-GRPC_INC_Darwin=-I$(dir $(GRPC_CPP_PLUGIN))../include
-GRPC_LIB_Darwin=-L$(dir $(GRPC_CPP_PLUGIN))../lib -lgrpc++ -lgrpc -lgpr -lprotobuf -lpthread -labsl_synchronization
-PROTOBUF_LIB_Darwin:=-L/opt/local/lib -lprotobuf -lpthread
 CARTESI_EXECUTABLE_LDFLAGS_Darwin=-Wl,-rpath,$(BUILDDIR)/lib -Wl,-rpath,$(CURDIR)
 PROFILE_DATA_Darwin=default.profdata
 
@@ -107,8 +115,8 @@ GRPC_INC=$(GRPC_INC_$(UNAME))
 PROTOBUF_LIB=$(PROTOBUF_LIB_$(UNAME))
 CARTESI_EXECUTABLE_LDFLAGS=$(CARTESI_EXECUTABLE_LDFLAGS_$(UNAME))
 
-SERVER_MANAGER_LIBS:=$(CRYPTOPP_LIB) $(GRPC_LIB) $(BOOST_CORO_LIB) $(BOOST_LOG_LIB) -ldl
-TEST_SERVER_MANAGER_LIBS:=$(CRYPTOPP_LIB) $(GRPC_LIB) -ldl
+SERVER_MANAGER_LIBS:=$(CRYPTOPP_LIB) $(GRPC_LIB) $(BOOST_CORO_LIB) $(BOOST_LOG_LIB) $(PROTOBUF_LIB) -ldl
+TEST_SERVER_MANAGER_LIBS:=$(CRYPTOPP_LIB) $(GRPC_LIB) $(PROTOBUF_LIB) -ldl
 
 WARNS=-W -Wall -pedantic
 
