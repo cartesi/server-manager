@@ -46,10 +46,13 @@ CXX_Darwin=clang++
 INCS_Darwin=
 
 ifeq ($(UNAME),Darwin)
+
 ifeq ($(MACOSX_DEPLOYMENT_TARGET),)
 export MACOSX_DEPLOYMENT_TARGET := $(shell sw_vers -productVersion | sed -r  "s/([[:digit:]]+)\.([[:digit:]]+)\..+/\1.\2.0/")
 endif
+
 SOLDFLAGS_Darwin+=-Wl,-rpath,$(BUILDDIR)/lib -Wl,-rpath,$(CURDIR)
+
 # Homebrew installation
 ifneq (,$(shell which brew))
 BREW_PREFIX := $(shell brew --prefix)
@@ -59,11 +62,12 @@ CRYPTOPP_LIB_Darwin:=-L$(BREW_PREFIX)/lib -lcryptopp
 CRYPTOPP_INC_Darwin:=-I$(BREW_PREFIX)/include
 GRPC_INC_Darwin:=$(shell pkg-config --cflags-only-I grpc++ protobuf)
 GRPC_LIB_Darwin:=$(shell pkg-config --libs grpc++ protobuf)
+
 # Macports installation
 else ifneq (,$(shell which port))
 PORT_PREFIX=/opt/local
-BOOST_LIB_DIR_Darwin=-L$(PORT_PREFIX)/lib
-BOOST_INC_Darwin=-I$(PORT_PREFIX)/include
+BOOST_LIB_DIR_Darwin=-L$(PORT_PREFIX)/libexec/boost/1.81/lib
+BOOST_INC_Darwin=-I$(PORT_PREFIX)/libexec/boost/1.81/include
 CRYPTOPP_LIB_Darwin:=-L$(PORT_PREFIX)/lib -lcryptopp
 CRYPTOPP_INC_Darwin:=-I$(PORT_PREFIX)/include
 GRPC_INC_Darwin=-I$(dir $(GRPC_CPP_PLUGIN))../include
