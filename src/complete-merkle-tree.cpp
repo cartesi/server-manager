@@ -16,6 +16,8 @@
 
 #include "complete-merkle-tree.h"
 
+#include <cassert>
+
 /// \file
 /// \brief Complete Merkle tree implementation.
 

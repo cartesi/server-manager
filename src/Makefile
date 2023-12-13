@@ -189,7 +189,7 @@ CLANG_FORMAT_FILES:=$(filter-out %.pb.h,$(strip $(CLANG_FORMAT_FILES)))
 
 EMPTY:=
 SPACE:=$(EMPTY) $(EMPTY)
-CLANG_TIDY_HEADER_FILTER=$(PWD)/($(subst $(SPACE),|,$(LINTER_HEADERS)))
+CLANG_TIDY_HEADER_FILTER=$(CURDIR)/($(subst $(SPACE),|,$(LINTER_HEADERS)))
 
 CXXFLAGS+=$(OPTFLAGS) -std=c++17 -fvisibility=hidden -fPIC -MMD $(CC_MARCH) $(INCS) $(GCFLAGS) $(UBFLAGS) $(DEFS) $(WARNS) $(MYCFLAGS)
 CFLAGS+=$(OPTFLAGS) -std=c99 -fvisibility=hidden -fPIC -MMD $(CC_MARCH) $(INCS) $(GCFLAGS) $(UBFLAGS) $(DEFS) $(WARNS) $(MYCFLAGS)
@@ -350,13 +350,13 @@ test-server-manager: $(TEST_SERVER_MANAGER_OBJS)
 	$(PROTOC) $(PROTOC_FLAGS) -I$(HEALTHCHECK_DIR) --cpp_out=. $<
 
 %.clang-tidy: %.cpp $(PROTO_SOURCES)
-	@$(CLANG_TIDY) --header-filter='$(CLANG_TIDY_HEADER_FILTER)' $< -- $(CXXFLAGS) 2>/dev/null
-	@$(CXX) $(CXXFLAGS) $< -MM -MT $@ -MF $@.d > /dev/null 2>&1
+	$(CLANG_TIDY) --header-filter='$(CLANG_TIDY_HEADER_FILTER)' $< -- $(CXXFLAGS) 2>/dev/null
+	$(CXX) $(CXXFLAGS) $< -MM -MT $@ -MF $@.d > /dev/null 2>&1
 	@touch $@
 
 %.clang-tidy: %.c $(PROTO_SOURCES)
-	@$(CLANG_TIDY) --header-filter='$(CLANG_TIDY_HEADER_FILTER)' $< -- $(CFLAGS) 2>/dev/null
-	@$(CC) $(CFLAGS) $< -MM -MT $@ -MF $@.d > /dev/null 2>&1
+	$(CLANG_TIDY) --header-filter='$(CLANG_TIDY_HEADER_FILTER)' $< -- $(CFLAGS) 2>/dev/null
+	$(CC) $(CFLAGS) $< -MM -MT $@ -MF $@.d > /dev/null 2>&1
 	@touch $@
 
 %.o: %.cpp

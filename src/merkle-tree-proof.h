@@ -20,10 +20,8 @@
 /// \file
 /// \brief Merkle tree proof structure
 
-#include <cassert>
+#include "i-hasher.h"
 #include <cstdint>
-#include <exception>
-#include <iostream>
 #include <vector>
 
 namespace cartesi {
@@ -221,7 +219,7 @@ public:
             throw std::out_of_range{"log2_root_size is too large"};
         }
         if (new_log2_target_size < get_log2_target_size()) {
-            throw std::out_of_range{"log2_taget_size is too small"};
+            throw std::out_of_range{"log2_target_size is too small"};
         }
         merkle_tree_proof<HASH_TYPE, ADDRESS_TYPE> sliced(new_log2_root_size, new_log2_target_size);
         hash_type hash = get_target_hash();
@@ -254,7 +252,7 @@ public:
 
 private:
     /// \brief Converts log2_size to index into siblings array
-    /// \return Index into siblings array, or throws exception if out of bouds
+    /// \return Index into siblings array, or throws exception if out of bounds
     int log2_size_to_index(int log2_size) const {
         // We know log2_root_size > 0, so log2_root_size-1 >= 0
         const int index = m_log2_root_size - 1 - log2_size;

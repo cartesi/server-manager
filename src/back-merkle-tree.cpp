@@ -15,6 +15,7 @@
 //
 
 #include "back-merkle-tree.h"
+#include <cassert>
 #include <limits>
 
 /// \file

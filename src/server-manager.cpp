@@ -14,16 +14,20 @@
 // limitations under the License.
 //
 
+#if defined(__clang__) && defined(__APPLE__)
+#if !defined(__ENVIRONMENT_OS_VERSION_MIN_REQUIRED__) && defined(__ENVIRONMENT_MAC_OS_X_VERSION_MIN_REQUIRED__)
+#define __ENVIRONMENT_OS_VERSION_MIN_REQUIRED__ __ENVIRONMENT_MAC_OS_X_VERSION_MIN_REQUIRED__
+#endif
+#endif
+
 #include <algorithm>
 #include <array>
 #include <chrono>
 #include <cstdint>
 #include <deque>
-#include <iomanip>
 #include <map>
 #include <new>
 #include <optional>
-#include <sstream>
 #include <string>
 #include <unordered_map>
 #include <variant>
@@ -178,7 +182,7 @@ static std::string request_metadata(const grpc::ServerContext &context) {
 // The idea is as follows:
 // 1) Completion queue returns tag-1 identifying an <RPC-name> server call
 // 2) Processing of tag-1 starts the appropriate client call
-// using stub->Async<RPC-name>() and reader->Finish(), and specifes tag-2 for
+// using stub->Async<RPC-name>() and reader->Finish(), and specifies tag-2 for
 // completion
 // 4) Completion queue returns tag-2 identifying the client call is complete
 // 5) Processing of tag-2 passes result back using write->Finish(), and
@@ -459,7 +463,7 @@ public:
         }
     }
 
-    /// \brief Desctructor automatically releases lock
+    /// \brief Destructor automatically releases lock
     ~auto_lock() {
         m_lock = false;
     }
@@ -1996,7 +2000,7 @@ static std::string read_memory_range(async_context &actx, const MemoryRangeConfi
     return data ? std::move(*data) : std::string{};
 }
 
-/// \brief Checkes if all values are null
+/// \brief Checks if all values are null
 /// \param begin First element
 /// \param end One past last element
 /// \return True if all are null, false otherwie
@@ -2399,7 +2403,7 @@ static void process_pending_query(handler_context &hctx, async_context &actx, ep
     set_htif_yield_ack_data(actx, ROLLUP_INSPECT_STATE);
     auto max_mcycle = actx.session.current_mcycle + actx.session.server_cycles.max_inspect_state;
     // Loop getting reports until the machine exceeds max_mcycle, rejects the query, accepts the query,
-    // or behaves inaproppriately
+    // or behaves inappropriately
     q.status = completion_status::accepted;
     auto start_time = std::chrono::system_clock::now();
     auto current_mcycle = actx.session.current_mcycle;
@@ -2509,7 +2513,7 @@ static void process_pending_inputs(handler_context &hctx, async_context &actx, e
             check_htif_yield_ack_data(actx, ROLLUP_ADVANCE_STATE);
             auto max_mcycle = actx.session.current_mcycle + actx.session.server_cycles.max_advance_state;
             // Loop getting vouchers and notices until the machine exceeds
-            // max_mcycle, rejects the input, accepts the input, or behaves inaproppriately
+            // max_mcycle, rejects the input, accepts the input, or behaves inappropriately
             auto start_time = std::chrono::system_clock::now();
             auto mcycle_increment = actx.session.server_cycles.advance_state_increment;
             auto deadline_increment = actx.session.server_deadline.advance_state_increment;

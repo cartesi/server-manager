@@ -47,7 +47,6 @@
 #pragma clang diagnostic pop
 #endif
 
-#include "back-merkle-tree.h"
 #include "complete-merkle-tree.h"
 
 using CartesiMachine::Void;
@@ -508,7 +507,7 @@ static void init_valid_advance_state_request(AdvanceStateRequest &request, const
     input_metadata->set_input_index(input_index);
 
     auto *input_payload = request.mutable_input_payload();
-    *input_payload = get_voucher_payload(input_index); // NOLINT: suppres crytopp warnings
+    *input_payload = get_voucher_payload(input_index); // NOLINT: suppress crytopp warnings
 }
 
 static void init_valid_inspect_state_request(InspectStateRequest &request, const std::string &session_id,
@@ -516,7 +515,7 @@ static void init_valid_inspect_state_request(InspectStateRequest &request, const
     request.set_session_id(session_id);
 
     auto *query_payload = request.mutable_query_payload();
-    *query_payload = get_report_payload(input); // NOLINT: suppres crytopp warnings
+    *query_payload = get_report_payload(input); // NOLINT: suppress crytopp warnings
 }
 
 static void init_valid_finish_epoch_request(FinishEpochRequest &epoch_request, const std::string &session_id,
@@ -537,8 +536,8 @@ static void assert_status(Status &status, const std::string &rpcname, bool expec
             throw std::runtime_error("Call to " + rpcname + " failed. Code: " + std::to_string(status.error_code()) +
                 " Message: " + status.error_message() + ". Assert at " + file + ":" + std::to_string(line));
         }
-        throw std::runtime_error("Call to " + rpcname + " succeded when was expected to fail. Assert at " + file + ":" +
-            std::to_string(line));
+        throw std::runtime_error("Call to " + rpcname + " succeeded when was expected to fail. Assert at " + file +
+            ":" + std::to_string(line));
     }
 }
 
@@ -1014,7 +1013,7 @@ static void validate_finish_epoch_response(FinishEpochResponse &response, uint64
     cartesi::complete_merkle_tree notices_tree{LOG2_ROOT_SIZE, LOG2_KECCAK_SIZE, LOG2_KECCAK_SIZE};
     assemble_output_epoch_trees(response, vouchers_tree, notices_tree, input_count, skipped);
 
-    // Chech vouchers and notices epoch root hashes
+    // Check vouchers and notices epoch root hashes
     ASSERT(get_proto_hash(response.vouchers_epoch_root_hash()) == vouchers_tree.get_root_hash(),
         "Received vouchers epoch root hash should match the calculated one");
     ASSERT(get_proto_hash(response.notices_epoch_root_hash()) == notices_tree.get_root_hash(),
@@ -1214,7 +1213,7 @@ static void test_advance_state(const std::function<void(const std::string &title
         ASSERT_STATUS(status, "EndSession", true);
     });
 
-    test("Should complete with success enqueing on a new epoch", [](ServerManagerClient &manager) {
+    test("Should complete with success enqueuing on a new epoch", [](ServerManagerClient &manager) {
         StartSessionRequest session_request = create_valid_start_session_request();
         StartSessionResponse session_response;
         Status status = manager.start_session(session_request, session_response);
@@ -1712,7 +1711,7 @@ static void test_get_epoch_status(const std::function<void(const std::string &ti
         status = manager.get_epoch_status(status_request, status_response);
         ASSERT_STATUS(status, "GetEpochStatus", true);
 
-        // assert status_resonse content
+        // assert status_response content
         check_empty_epoch_status(status_response, session_request.session_id(), session_request.active_epoch_index(),
             EpochState::ACTIVE, 0);
 
@@ -1799,7 +1798,7 @@ static void test_get_epoch_status(const std::function<void(const std::string &ti
         status = manager.get_epoch_status(status_request, status_response);
         ASSERT_STATUS(status, "GetEpochStatus", true);
 
-        // assert status_resonse content
+        // assert status_response content
         check_empty_epoch_status(status_response, session_request.session_id(), session_request.active_epoch_index(),
             EpochState::FINISHED, 0);
 
@@ -1808,7 +1807,7 @@ static void test_get_epoch_status(const std::function<void(const std::string &ti
         status = manager.get_epoch_status(status_request, status_response);
         ASSERT_STATUS(status, "GetEpochStatus", true);
 
-        // assert status_resonse content
+        // assert status_response content
         check_empty_epoch_status(status_response, session_request.session_id(),
             session_request.active_epoch_index() + 1, EpochState::ACTIVE, 0);
 
@@ -1840,7 +1839,7 @@ static void test_get_epoch_status(const std::function<void(const std::string &ti
         status = manager.get_epoch_status(status_request, status_response);
         ASSERT_STATUS(status, "GetEpochStatus", true);
 
-        // assert status_resonse content
+        // assert status_response content
         check_empty_epoch_status(status_response, session_request.session_id(), session_request.active_epoch_index(),
             EpochState::ACTIVE, 1);
 
@@ -1870,7 +1869,7 @@ static void test_get_epoch_status(const std::function<void(const std::string &ti
             wait_pending_inputs_to_be_processed(manager, status_request, status_response, false,
                 WAITING_PENDING_INPUT_MAX_RETRIES);
 
-            // assert status_resonse content
+            // assert status_response content
             ASSERT(status_response.session_id() == session_request.session_id(),
                 "status response session_id should be the same as the one created");
             ASSERT(status_response.epoch_index() == session_request.active_epoch_index(),
@@ -1930,7 +1929,7 @@ static void test_get_epoch_status(const std::function<void(const std::string &ti
             wait_pending_inputs_to_be_processed(manager, status_request, status_response, false,
                 WAITING_PENDING_INPUT_MAX_RETRIES);
 
-            // assert status_resonse content
+            // assert status_response content
             ASSERT(status_response.session_id() == session_request.session_id(),
                 "status response session_id should be the same as the one created");
             ASSERT(status_response.epoch_index() == session_request.active_epoch_index() + 1,
@@ -1979,7 +1978,7 @@ static void test_get_epoch_status(const std::function<void(const std::string &ti
             wait_pending_inputs_to_be_processed(manager, status_request, status_response, false,
                 WAITING_PENDING_INPUT_MAX_RETRIES);
 
-            // assert status_resonse content
+            // assert status_response content
             ASSERT(status_response.session_id() == session_request.session_id(),
                 "status response session_id should be the same as the one created");
             ASSERT(status_response.epoch_index() == session_request.active_epoch_index(),
@@ -2030,7 +2029,7 @@ static void test_get_epoch_status(const std::function<void(const std::string &ti
             wait_pending_inputs_to_be_processed(manager, status_request, status_response, true,
                 WAITING_PENDING_INPUT_MAX_RETRIES);
 
-            // assert status_resonse content
+            // assert status_response content
             ASSERT(status_response.session_id() == session_request.session_id(),
                 "status response session_id should be the same as the one created");
             ASSERT(status_response.epoch_index() == session_request.active_epoch_index(),
@@ -2074,7 +2073,7 @@ static void test_get_epoch_status(const std::function<void(const std::string &ti
         wait_pending_inputs_to_be_processed(manager, status_request, status_response, false,
             WAITING_PENDING_INPUT_MAX_RETRIES);
 
-        // assert status_resonse content
+        // assert status_response content
         ASSERT(status_response.session_id() == session_request.session_id(),
             "status response session_id should be the same as the one created");
         ASSERT(status_response.epoch_index() == session_request.active_epoch_index(),
@@ -2118,7 +2117,7 @@ static void test_get_epoch_status(const std::function<void(const std::string &ti
             wait_pending_inputs_to_be_processed(manager, status_request, status_response, false,
                 WAITING_PENDING_INPUT_MAX_RETRIES);
 
-            // assert status_resonse content
+            // assert status_response content
             ASSERT(status_response.session_id() == session_request.session_id(),
                 "status response session_id should be the same as the one created");
             ASSERT(status_response.epoch_index() == session_request.active_epoch_index(),
@@ -2170,7 +2169,7 @@ static void test_get_epoch_status(const std::function<void(const std::string &ti
             status = manager.get_epoch_status(status_request, status_response);
             ASSERT_STATUS(status, "GetEpochStatus", true);
 
-            // assert status_resonse content
+            // assert status_response content
             ASSERT(status_response.session_id() == session_request.session_id(),
                 "status response session_id should be the same as the one created");
             ASSERT(status_response.epoch_index() == session_request.active_epoch_index(),
@@ -2218,7 +2217,7 @@ static void test_get_epoch_status(const std::function<void(const std::string &ti
             status = manager.get_epoch_status(status_request, status_response);
             ASSERT_STATUS(status, "GetEpochStatus", true);
 
-            // assert status_resonse content
+            // assert status_response content
             ASSERT(status_response.session_id() == session_request.session_id(),
                 "status response session_id should be the same as the one created");
             ASSERT(status_response.epoch_index() == session_request.active_epoch_index(),
@@ -2266,7 +2265,7 @@ static void test_get_epoch_status(const std::function<void(const std::string &ti
             status = manager.get_epoch_status(status_request, status_response);
             ASSERT_STATUS(status, "GetEpochStatus", true);
 
-            // assert status_resonse content
+            // assert status_response content
             ASSERT(status_response.session_id() == session_request.session_id(),
                 "status response session_id should be the same as the one created");
             ASSERT(status_response.epoch_index() == session_request.active_epoch_index(),
@@ -2310,7 +2309,7 @@ static void test_get_epoch_status(const std::function<void(const std::string &ti
         status = manager.get_epoch_status(status_request, status_response);
         ASSERT_STATUS(status, "GetEpochStatus", true);
 
-        // assert status_resonse content
+        // assert status_response content
         ASSERT(status_response.session_id() == session_request.session_id(),
             "status response session_id should be the same as the one created");
         ASSERT(status_response.epoch_index() == session_request.active_epoch_index(),
@@ -2350,7 +2349,7 @@ static void test_get_epoch_status(const std::function<void(const std::string &ti
             status = manager.get_epoch_status(status_request, status_response);
             ASSERT_STATUS(status, "GetEpochStatus", true);
 
-            // assert status_resonse content
+            // assert status_response content
             ASSERT(status_response.session_id() == session_request.session_id(),
                 "status response session_id should be the same as the one created");
             ASSERT(status_response.epoch_index() == session_request.active_epoch_index(),
@@ -2392,7 +2391,7 @@ static void test_get_epoch_status(const std::function<void(const std::string &ti
             status = manager.get_epoch_status(status_request, status_response);
             ASSERT_STATUS(status, "GetEpochStatus", true);
 
-            // assert status_resonse content
+            // assert status_response content
             ASSERT(status_response.session_id() == session_request.session_id(),
                 "status response session_id should be the same as the one created");
             ASSERT(status_response.epoch_index() == session_request.active_epoch_index(),
@@ -2715,7 +2714,7 @@ static void test_inspect_state(const std::function<void(const std::string &title
             check_inspect_state_response(inspect_response, inspect_request.session_id(),
                 session_request.active_epoch_index(), 0, 0, CompletionStatus::EXCEPTION);
 
-            ASSERT(inspect_response.has_exception_data(), "InspectResponse should containd exception data");
+            ASSERT(inspect_response.has_exception_data(), "InspectResponse should contain exception data");
             ASSERT(inspect_response.exception_data() == "test payload",
                 "exception_data should contain expected exception payload");
             // end session
@@ -2741,7 +2740,7 @@ static void test_inspect_state(const std::function<void(const std::string &title
         check_inspect_state_response(inspect_response, inspect_request.session_id(),
             session_request.active_epoch_index(), 0, 0, CompletionStatus::EXCEPTION);
 
-        ASSERT(inspect_response.has_exception_data(), "InspectResponse should containd exception data");
+        ASSERT(inspect_response.has_exception_data(), "InspectResponse should contain exception data");
         ASSERT(inspect_response.exception_data() == "dapp exited with exit status: 2",
             "exception_data should contain expected exception payload");
 
@@ -2769,7 +2768,7 @@ static void test_inspect_state(const std::function<void(const std::string &title
             check_inspect_state_response(inspect_response, inspect_request.session_id(),
                 session_request.active_epoch_index(), 0, 0, CompletionStatus::EXCEPTION);
 
-            ASSERT(inspect_response.has_exception_data(), "InspectResponse should containd exception data");
+            ASSERT(inspect_response.has_exception_data(), "InspectResponse should contain exception data");
             ASSERT(inspect_response.exception_data() == "rollup-http-server exited with 0 status",
                 "exception_data should contain expected exception payload");
 
@@ -2927,7 +2926,7 @@ static void test_inspect_state(const std::function<void(const std::string &title
         ASSERT_STATUS_CODE(status, "InspectState", StatusCode::INVALID_ARGUMENT);
     });
 
-    test("Should complete with success enqueing on a new epoch", [](ServerManagerClient &manager) {
+    test("Should complete with success enqueuing on a new epoch", [](ServerManagerClient &manager) {
         StartSessionRequest session_request = create_valid_start_session_request("inspect-state-machine");
         StartSessionResponse session_response;
         Status status = manager.start_session(session_request, session_response);
@@ -3491,7 +3490,7 @@ static void test_finish_epoch(const std::function<void(const std::string &title,
         wait_pending_inputs_to_be_processed(manager, status_request, status_response, false,
             WAITING_PENDING_INPUT_MAX_RETRIES);
 
-        // assert status_resonse content
+        // assert status_response content
         ASSERT(status_response.session_id() == session_request.session_id(),
             "status response session_id should be the same as the one created");
         ASSERT(status_response.epoch_index() == session_request.active_epoch_index(),
@@ -3541,7 +3540,7 @@ static void test_delete_epoch(const std::function<void(const std::string &title,
         status = manager.get_epoch_status(status_request, status_response);
         ASSERT_STATUS(status, "GetEpochStatus", true);
 
-        // assert status_resonse content
+        // assert status_response content
         check_empty_epoch_status(status_response, session_request.session_id(), session_request.active_epoch_index(),
             EpochState::FINISHED, 0);
 
@@ -3655,7 +3654,7 @@ static void test_delete_epoch(const std::function<void(const std::string &title,
         status = manager.get_epoch_status(status_request, status_response);
         ASSERT_STATUS(status, "GetEpochStatus", true);
 
-        // assert status_resonse content
+        // assert status_response content
         check_empty_epoch_status(status_response, session_request.session_id(), session_request.active_epoch_index(),
             EpochState::FINISHED, 0);
 
@@ -3792,7 +3791,7 @@ static void test_session_simulations(const std::function<void(const std::string 
         wait_pending_inputs_to_be_processed(manager, status_request, status_response, false,
             WAITING_PENDING_INPUT_MAX_RETRIES);
 
-        // assert status_resonse content
+        // assert status_response content
         ASSERT(status_response.session_id() == session_request.session_id(),
             "status response session_id should be the same as the one created");
         ASSERT(status_response.epoch_index() == session_request.active_epoch_index(),
@@ -3849,7 +3848,7 @@ static void test_session_simulations(const std::function<void(const std::string 
             wait_pending_inputs_to_be_processed(manager, status_request, status_response, false,
                 WAITING_PENDING_INPUT_MAX_RETRIES);
 
-            // assert status_resonse content
+            // assert status_response content
             ASSERT(status_response.session_id() == session_request.session_id(),
                 "status response session_id should be the same as the one created");
             ASSERT(status_response.epoch_index() == session_request.active_epoch_index(),

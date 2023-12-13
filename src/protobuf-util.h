@@ -20,7 +20,6 @@
 #pragma GCC diagnostic ignored "-Wdeprecated-copy"
 #pragma GCC diagnostic ignored "-Wtype-limits"
 #include "cartesi-machine.pb.h"
-#include "versioning.pb.h"
 #pragma GCC diagnostic pop
 
 #include "machine-merkle-tree.h"
