@@ -37,7 +37,7 @@ HEALTHCHECK_PROTO := third-party/health.proto
 
 # Docker image settings
 TAG ?= devel
-EMULATOR_TAG ?= 0.15.2
+EMULATOR_TAG ?= 0.15.3
 EMULATOR_REPOSITORY ?= cartesi/machine-emulator
 
 # Mac OS X specific settings

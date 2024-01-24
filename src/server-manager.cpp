@@ -101,7 +101,7 @@ constexpr const uint64_t ROLLUP_INSPECT_STATE = 1;
 
 static constexpr uint32_t manager_version_major = 0;
 static constexpr uint32_t manager_version_minor = 8;
-static constexpr uint32_t manager_version_patch = 2;
+static constexpr uint32_t manager_version_patch = 3;
 static constexpr const char *manager_version_pre_release = "";
 static constexpr const char *manager_version_build = "";
 
