@@ -36,6 +36,7 @@ GCLDFLAGS=-Wl,--gc-sections,--print-gc-sections
 endif
 
 PROTOC:=$(shell which protoc)
+PROTOC_FLAGS:=--experimental_allow_proto3_optional
 GRPC_CPP_PLUGIN:=$(shell which grpc_cpp_plugin)
 
 # Mac OS X specific setup
@@ -56,9 +57,8 @@ BOOST_LIB_DIR_Darwin=-L$(BREW_PREFIX)/lib
 BOOST_INC_Darwin=-I$(BREW_PREFIX)/include
 CRYPTOPP_LIB_Darwin:=-L$(BREW_PREFIX)/lib -lcryptopp
 CRYPTOPP_INC_Darwin:=-I$(BREW_PREFIX)/include
-PROTOBUF_LIB_Darwin:=$(shell pkg-config --libs protobuf)
-GRPC_INC_Darwin:=$(shell pkg-config --cflags-only-I grpc++)
-GRPC_LIB_Darwin:=$(shell pkg-config --libs grpc++)
+GRPC_INC_Darwin:=$(shell pkg-config --cflags-only-I grpc++ protobuf)
+GRPC_LIB_Darwin:=$(shell pkg-config --libs grpc++ protobuf)
 # Macports installation
 else ifneq (,$(shell which port))
 PORT_PREFIX=/opt/local
@@ -66,7 +66,6 @@ BOOST_LIB_DIR_Darwin=-L$(PORT_PREFIX)/lib
 BOOST_INC_Darwin=-I$(PORT_PREFIX)/include
 CRYPTOPP_LIB_Darwin:=-L$(PORT_PREFIX)/lib -lcryptopp
 CRYPTOPP_INC_Darwin:=-I$(PORT_PREFIX)/include
-PROTOBUF_LIB_Darwin:=-L$(PORT_PREFIX)/lib -lprotobuf -lpthread
 GRPC_INC_Darwin=-I$(dir $(GRPC_CPP_PLUGIN))../include
 GRPC_LIB_Darwin=-L$(dir $(GRPC_CPP_PLUGIN))../lib -lgrpc++ -lgrpc -lgpr -lprotobuf -lpthread -labsl_synchronization
 else
@@ -93,9 +92,8 @@ BOOST_PROCESS_LIB_Linux:=-lpthread
 BOOST_INC_Linux=
 CRYPTOPP_LIB_Linux:=-lcryptopp
 CRYPTOPP_INC_Linux:=
-GRPC_INC_Linux:=-I$(BUILDDIR)/include
-GRPC_LIB_Linux:=-L$(BUILDDIR)/lib -lgrpc++ -lgrpc -lgpr -lprotobuf -lpthread -labsl_synchronization
-PROTOBUF_LIB_Linux:=-L$(BUILDDIR)/lib -lprotobuf -lpthread
+GRPC_INC_Linux:=$(shell pkg-config --cflags-only-I grpc++ protobuf)
+GRPC_LIB_Linux:=$(shell pkg-config --libs grpc++ protobuf)
 CARTESI_EXECUTABLE_LDFLAGS_Linux=-Wl,-rpath,'$$ORIGIN/' -Wl,--copy-dt-needed-entries
 PROFILE_DATA_Linux=
 
@@ -112,11 +110,10 @@ CRYPTOPP_LIB=$(CRYPTOPP_LIB_$(UNAME))
 CRYPTOPP_INC=$(CRYPTOPP_INC_$(UNAME))
 GRPC_LIB=$(GRPC_LIB_$(UNAME))
 GRPC_INC=$(GRPC_INC_$(UNAME))
-PROTOBUF_LIB=$(PROTOBUF_LIB_$(UNAME))
 CARTESI_EXECUTABLE_LDFLAGS=$(CARTESI_EXECUTABLE_LDFLAGS_$(UNAME))
 
-SERVER_MANAGER_LIBS:=$(CRYPTOPP_LIB) $(GRPC_LIB) $(BOOST_CORO_LIB) $(BOOST_LOG_LIB) $(PROTOBUF_LIB) -ldl
-TEST_SERVER_MANAGER_LIBS:=$(CRYPTOPP_LIB) $(GRPC_LIB) $(PROTOBUF_LIB) -ldl
+SERVER_MANAGER_LIBS:=$(CRYPTOPP_LIB) $(GRPC_LIB) $(BOOST_CORO_LIB) $(BOOST_LOG_LIB) -ldl
+TEST_SERVER_MANAGER_LIBS:=$(CRYPTOPP_LIB) $(GRPC_LIB) -ldl
 
 WARNS=-W -Wall -pedantic
 
@@ -337,16 +334,16 @@ test-server-manager: $(TEST_SERVER_MANAGER_OBJS)
 .PRECIOUS: %.grpc.pb.cc %.grpc.pb.h %.pb.cc %.pb.h
 
 %.grpc.pb.cc: $(GRPC_DIR)/%.proto
-	$(PROTOC) -I$(<D) --grpc_out=. --plugin=protoc-gen-grpc=$(GRPC_CPP_PLUGIN) $<
+	$(PROTOC) $(PROTOC_FLAGS) -I$(<D) --grpc_out=. --plugin=protoc-gen-grpc=$(GRPC_CPP_PLUGIN) $<
 
 %.pb.cc %.pb.h: $(GRPC_DIR)/%.proto
-	$(PROTOC) -I$(GRPC_DIR) --cpp_out=. $<
+	$(PROTOC) $(PROTOC_FLAGS) -I$(GRPC_DIR) --cpp_out=. $<
 
 %.grpc.pb.cc: $(HEALTHCHECK_DIR)/%.proto
-	$(PROTOC) -I$(HEALTHCHECK_DIR) --grpc_out=. --plugin=protoc-gen-grpc=$(GRPC_CPP_PLUGIN) $<
+	$(PROTOC) $(PROTOC_FLAGS) -I$(HEALTHCHECK_DIR) --grpc_out=. --plugin=protoc-gen-grpc=$(GRPC_CPP_PLUGIN) $<
 
 %.pb.cc %.pb.h: $(HEALTHCHECK_DIR)/%.proto
-	$(PROTOC) -I$(HEALTHCHECK_DIR) --cpp_out=. $<
+	$(PROTOC) $(PROTOC_FLAGS) -I$(HEALTHCHECK_DIR) --cpp_out=. $<
 
 %.clang-tidy: %.cpp $(PROTO_SOURCES)
 	@$(CLANG_TIDY) --header-filter='$(CLANG_TIDY_HEADER_FILTER)' $< -- $(CXXFLAGS) 2>/dev/null
