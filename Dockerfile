@@ -2,13 +2,13 @@ ARG EMULATOR_REPOSITORY=cartesi/machine-emulator
 ARG EMULATOR_TAG=0.16.0
 ARG RELEASE=yes
 
-FROM --platform=$TARGETPLATFORM ${EMULATOR_REPOSITORY}:${EMULATOR_TAG} as dep-builder
+FROM --platform=$TARGETPLATFORM ${EMULATOR_REPOSITORY}:${EMULATOR_TAG} as linux-env
 
 USER root
 
 RUN apt-get update && \
     DEBIAN_FRONTEND="noninteractive" apt-get install --no-install-recommends -y \
-    build-essential wget git \
+    build-essential wget git procps \
     libreadline-dev libboost-coroutine1.81-dev libboost-context1.81-dev \
     libboost-filesystem1.81-dev libboost-log1.81-dev libssl-dev libc-ares-dev zlib1g-dev \
     ca-certificates automake libtool patchelf cmake pkg-config lua5.4 liblua5.4-dev \
@@ -20,7 +20,7 @@ RUN apt-get update && \
 
 WORKDIR /usr/src/server-manager
 
-FROM --platform=$TARGETPLATFORM dep-builder as builder
+FROM --platform=$TARGETPLATFORM linux-env as builder
 
 COPY . .
 

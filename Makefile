@@ -118,8 +118,29 @@ source-default: | $(SERVER_MANAGER_PROTO) checksum
 image:
 	docker build -t cartesi/server-manager:$(TAG) -f Dockerfile --build-arg EMULATOR_REPOSITORY=$(EMULATOR_REPOSITORY) --build-arg EMULATOR_TAG=$(EMULATOR_TAG) .
 
+linux-env-stage-image:
+	docker build --target linux-env -t cartesi/server-manager:linux-env -f Dockerfile --build-arg EMULATOR_REPOSITORY=$(EMULATOR_REPOSITORY) --build-arg EMULATOR_TAG=$(EMULATOR_TAG) .
+
 installer-stage-image:
 	docker build --target installer -t cartesi/server-manager:installer -f Dockerfile --build-arg EMULATOR_REPOSITORY=$(EMULATOR_REPOSITORY) --build-arg EMULATOR_TAG=$(EMULATOR_TAG) .
+
+check-linux-env:
+	@if docker images $(DOCKER_PLATFORM) -q cartesi/server-manager:linux-env 2>/dev/null | grep -q .; then \
+		echo "Docker image cartesi/server-manager:linux-env exists"; \
+	else \
+		echo "Docker image cartesi/server-manager:linux-env does not exist. Creating:"; \
+		$(MAKE) linux-env-stage-image; \
+	fi
+
+linux-env: check-linux-env
+	@docker run $(DOCKER_PLATFORM) --hostname linux-env -it --rm \
+		-e USER=$$(id -u -n) \
+		-e GROUP=$$(id -g -n) \
+		-e UID=$$(id -u) \
+		-e GID=$$(id -g) \
+		-v `pwd`:/usr/src/server-manager \
+		-w /usr/src/server-manager \
+		cartesi/server-manager:linux-env /bin/bash
 
 $(SUBCLEAN): %.clean:
 	$(MAKE) -C $* clean
