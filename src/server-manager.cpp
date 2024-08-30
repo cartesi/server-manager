@@ -93,12 +93,14 @@ constexpr const uint64_t ROLLUP_INSPECT_STATE = 1;
 
 static constexpr uint32_t manager_version_major = 0;
 static constexpr uint32_t manager_version_minor = 9;
-static constexpr uint32_t manager_version_patch = 1;
+static constexpr uint32_t manager_version_patch = 2;
 static constexpr const char *manager_version_pre_release = "";
 static constexpr const char *manager_version_build = "";
 
 static constexpr uint32_t machine_version_major = 0;
 static constexpr uint32_t machine_version_minor = 7;
+
+using namespace std::string_literals;
 
 using namespace CartesiServerManager;
 using namespace CartesiMachine;
@@ -129,6 +131,33 @@ static std::string request_metadata(const grpc::ServerContext &context) {
     do {                                                                                                               \
         BOOST_LOG_TRIVIAL(debug) << "Throwing from " << __FILE__ << ":" << __LINE__ << " at " << __PRETTY_FUNCTION__;  \
         throw(e);                                                                                                      \
+    } while (0);
+
+// NOLINTNEXTLINE(cppcoreguidelines-macro-usage)
+#define CHECK_STATUS_OR_FAIL(st, d)                                                                                    \
+    do {                                                                                                               \
+        if (!st.ok()) {                                                                                                \
+            if (st.error_code() == grpc::StatusCode::DEADLINE_EXCEEDED) {                                              \
+                THROW((finish_error_yield_none{st.error_code(),                                                        \
+                    "error contacting remote server: "s + d + " deadline exceeded"s}));                                \
+            } else {                                                                                                   \
+                THROW((finish_error_yield_none{st.error_code(),                                                        \
+                    "error contacting remote server: "s + st.error_message()}));                                       \
+            }                                                                                                          \
+        }                                                                                                              \
+    } while (0);
+
+// NOLINTNEXTLINE(cppcoreguidelines-macro-usage)
+#define CHECK_STATUS_OR_TAINT(st, se, d)                                                                               \
+    do {                                                                                                               \
+        if (!st.ok()) {                                                                                                \
+            if (st.error_code() == grpc::StatusCode::DEADLINE_EXCEEDED) {                                              \
+                THROW((taint_session{se, st.error_code(),                                                              \
+                    "error contacting remote server: "s + d + " deadline exceeded"s}));                                \
+            } else {                                                                                                   \
+                THROW((taint_session{se, st.error_code(), "error contacting remote server: "s + st.error_message()})); \
+            }                                                                                                          \
+        }                                                                                                              \
     } while (0);
 
 // gRPC async server calls involve a variety of objects:
@@ -654,9 +683,7 @@ static void store(async_context &actx, const std::string &directory) {
     grpc::Status status;
     reader->Finish(&response, &status, actx.self);
     actx.yield(side_effect::none);
-    if (!status.ok()) {
-        THROW((finish_error_yield_none{std::move(status)}));
-    }
+    CHECK_STATUS_OR_FAIL(status, "store");
 }
 
 /// \brief Marks epoch finished and update all proofs now that all leaves are present
@@ -933,9 +960,7 @@ static void shutdown_server(async_context &actx) {
     grpc::Status status;
     reader->Finish(&response, &status, actx.self);
     actx.yield(side_effect::none);
-    if (!status.ok()) {
-        THROW((finish_error_yield_none{std::move(status)}));
-    }
+    CHECK_STATUS_OR_FAIL(status, "fast");
 }
 
 /// \brief Creates a new handler for the EndSession RPC and starts accepting requests
@@ -1335,9 +1360,7 @@ static void check_server_version(async_context &actx) {
     grpc::Status status;
     reader->Finish(&response, &status, actx.self);
     actx.yield(side_effect::none);
-    if (!status.ok()) {
-        THROW((finish_error_yield_none{std::move(status)}));
-    }
+    CHECK_STATUS_OR_FAIL(status, "fast");
     // If version is incompatible, bail out
     if (response.version().major() != machine_version_major || response.version().minor() != machine_version_minor) {
         THROW((finish_error_yield_none{grpc::StatusCode::FAILED_PRECONDITION,
@@ -1359,9 +1382,7 @@ static void check_server_machine(async_context &actx, const std::string &directo
     grpc::Status status;
     reader->Finish(&response, &status, actx.self);
     actx.yield(side_effect::none);
-    if (!status.ok()) {
-        THROW((finish_error_yield_none{std::move(status)}));
-    }
+    CHECK_STATUS_OR_FAIL(status, "machine (instantiation)");
 }
 
 /// \brief Asynchronously gets the initial machine configuration from server
@@ -1377,9 +1398,7 @@ static MachineConfig get_initial_config(async_context &actx) {
     grpc::Status status;
     reader->Finish(&response, &status, actx.self);
     actx.yield(side_effect::none);
-    if (!status.ok()) {
-        THROW((finish_error_yield_none{std::move(status)}));
-    }
+    CHECK_STATUS_OR_FAIL(status, "fast");
     return response.config();
 }
 
@@ -1611,9 +1630,7 @@ static uint64_t get_current_mcycle(async_context &actx) {
     ReadCsrResponse response;
     reader->Finish(&response, &status, actx.self);
     actx.yield(side_effect::none);
-    if (!status.ok()) {
-        THROW((finish_error_yield_none{std::move(status)}));
-    }
+    CHECK_STATUS_OR_FAIL(status, "fast");
     return response.value();
 }
 
@@ -1626,14 +1643,13 @@ static uint64_t check_is_yielded(async_context &actx) {
     RunRequest run_request;
     run_request.set_limit(current_mcycle); // This will not change the machine
     grpc::ClientContext client_context;
+    set_deadline(client_context, actx.session.server_deadline.fast);
     auto reader = actx.session.server_stub->AsyncRun(&client_context, run_request, actx.completion_queue);
     grpc::Status run_status;
     RunResponse run_response;
     reader->Finish(&run_response, &run_status, actx.self);
     actx.yield(side_effect::none);
-    if (!run_status.ok()) {
-        THROW((finish_error_yield_none{std::move(run_status)}));
-    }
+    CHECK_STATUS_OR_FAIL(run_status, "fast");
     if (!run_response.iflags_y()) {
         THROW((finish_error_yield_none{grpc::StatusCode::INVALID_ARGUMENT, "expected manual yield"}));
     }
@@ -1656,9 +1672,7 @@ static hash_type get_root_hash(async_context &actx) {
     GetRootHashResponse response;
     reader->Finish(&response, &status, actx.self);
     actx.yield(side_effect::none);
-    if (!status.ok()) {
-        THROW((taint_session{actx.session, std::move(status)}));
-    }
+    CHECK_STATUS_OR_TAINT(status, actx.session, "machine (root hash)");
     return cartesi::get_proto_hash(response.hash());
 }
 
@@ -1843,9 +1857,7 @@ static void clear_memory_ranges(async_context &actx) {
         reader->Finish(&replace_response, &replace_status, actx.self);
         actx.yield(side_effect::none);
         (void) replace_request.release_config();
-        if (!replace_status.ok()) {
-            THROW((taint_session{actx.session, std::move(replace_status)}));
-        }
+        CHECK_STATUS_OR_TAINT(replace_status, actx.session, "fast");
     }
 }
 
@@ -1863,9 +1875,7 @@ static void clear_rx_buffer(async_context &actx) {
     reader->Finish(&replace_response, &replace_status, actx.self);
     actx.yield(side_effect::none);
     (void) replace_request.release_config();
-    if (!replace_status.ok()) {
-        THROW((taint_session{actx.session, std::move(replace_status)}));
-    }
+    CHECK_STATUS_OR_TAINT(replace_status, actx.session, "fast");
 }
 
 /// \brief Asynchronously writes data to a memory range
@@ -1886,9 +1896,7 @@ static void write_memory_range(async_context &actx, IT begin, IT end, const Memo
     grpc::Status write_status;
     reader->Finish(&write_response, &write_status, actx.self);
     actx.yield(side_effect::none);
-    if (!write_status.ok()) {
-        THROW((taint_session{actx.session, std::move(write_status)}));
-    }
+    CHECK_STATUS_OR_TAINT(write_status, actx.session, "fast");
 }
 
 /// \brief Asynchronously writes an EVM ABI string to a memory range
@@ -1917,9 +1925,7 @@ static void write_evm_abi_string(async_context &actx, IT begin, IT end, const Me
     grpc::Status write_status;
     reader->Finish(&write_response, &write_status, actx.self);
     actx.yield(side_effect::none);
-    if (!write_status.ok()) {
-        THROW((taint_session{actx.session, std::move(write_status)}));
-    }
+    CHECK_STATUS_OR_TAINT(write_status, actx.session, "fast");
 }
 
 /// \brief Asynchronously runs machine server up to given max cycle
@@ -1953,9 +1959,7 @@ static std::optional<RunResponse> run_machine(async_context &actx, uint64_t curr
         RunResponse run_response;
         reader->Finish(&run_response, &run_status, actx.self);
         actx.yield(side_effect::none);
-        if (!run_status.ok()) {
-            THROW((taint_session{actx.session, std::move(run_status)}));
-        }
+        CHECK_STATUS_OR_TAINT(run_status, actx.session, "advance/inspect state increment");
         // Check if yielded or halted or reached max_mcycle and return
         if (run_response.iflags_y() || run_response.iflags_x() || run_response.iflags_h() ||
             run_response.mcycle() >= max_mcycle) {
@@ -1988,9 +1992,7 @@ static std::string read_memory_range(async_context &actx, const MemoryRangeConfi
     ReadMemoryResponse read_response;
     reader->Finish(&read_response, &read_status, actx.self);
     actx.yield(side_effect::none);
-    if (!read_status.ok()) {
-        THROW((taint_session{actx.session, std::move(read_status)}));
-    }
+    CHECK_STATUS_OR_TAINT(read_status, actx.session, "fast");
     if (read_response.data().size() != read_request.length()) {
         THROW((taint_session{actx.session, grpc::StatusCode::INTERNAL, "read returned wrong number of bytes!"}));
     }
@@ -2092,9 +2094,7 @@ static evm_address_type read_voucher_address_and_payload_data_length(async_conte
     ReadMemoryResponse read_response;
     reader->Finish(&read_response, &read_status, actx.self);
     actx.yield(side_effect::none);
-    if (!read_status.ok()) {
-        THROW((taint_session{actx.session, std::move(read_status)}));
-    }
+    CHECK_STATUS_OR_TAINT(read_status, actx.session, "fast");
     if (read_response.data().size() != read_request.length()) {
         THROW((taint_session{actx.session, grpc::StatusCode::INTERNAL, "read returned wrong number of bytes!"}));
     }
@@ -2127,9 +2127,7 @@ static std::string read_voucher_payload_data(async_context &actx, uint64_t paylo
     ReadMemoryResponse read_response;
     reader->Finish(&read_response, &read_status, actx.self);
     actx.yield(side_effect::none);
-    if (!read_status.ok()) {
-        THROW((taint_session{actx.session, std::move(read_status)}));
-    }
+    CHECK_STATUS_OR_TAINT(read_status, actx.session, "fast");
     if (read_response.data().size() != payload_data_length) {
         THROW((taint_session{actx.session, grpc::StatusCode::INTERNAL, "read returned wrong number of bytes!"}));
     }
@@ -2153,9 +2151,7 @@ static uint64_t read_tx_payload_data_length(async_context &actx) {
     ReadMemoryResponse read_response;
     reader->Finish(&read_response, &read_status, actx.self);
     actx.yield(side_effect::none);
-    if (!read_status.ok()) {
-        THROW((taint_session{actx.session, std::move(read_status)}));
-    }
+    CHECK_STATUS_OR_TAINT(read_status, actx.session, "fast");
     if (read_response.data().size() != read_request.length()) {
         THROW((taint_session{actx.session, grpc::StatusCode::INTERNAL, "read returned wrong number of bytes!"}));
     }
@@ -2184,9 +2180,7 @@ static std::string read_tx_payload_data(async_context &actx, uint64_t payload_da
     ReadMemoryResponse read_response;
     reader->Finish(&read_response, &read_status, actx.self);
     actx.yield(side_effect::none);
-    if (!read_status.ok()) {
-        THROW((taint_session{actx.session, std::move(read_status)}));
-    }
+    CHECK_STATUS_OR_TAINT(read_status, actx.session, "fast");
     if (read_response.data().size() != payload_data_length) {
         THROW((taint_session{actx.session, grpc::StatusCode::INTERNAL, "read returned wrong number of bytes!"}));
     }
@@ -2211,9 +2205,7 @@ static proof_type get_proof(async_context &actx, uint64_t address, uint64_t log2
     GetProofResponse proof_response;
     reader->Finish(&proof_response, &proof_status, actx.self);
     actx.yield(side_effect::none);
-    if (!proof_status.ok()) {
-        THROW((taint_session{actx.session, std::move(proof_status)}));
-    }
+    CHECK_STATUS_OR_TAINT(proof_status, actx.session, "machine (proof)");
     return cartesi::get_proto_merkle_tree_proof(proof_response.proof());
 }
 
@@ -2272,9 +2264,7 @@ static void snapshot(async_context &actx) {
     Void response;
     reader->Finish(&response, &status, actx.self);
     actx.yield(side_effect::none);
-    if (!status.ok()) {
-        THROW((taint_session{actx.session, std::move(status)}));
-    }
+    CHECK_STATUS_OR_TAINT(status, actx.session, "fast");
 }
 
 /// \brief Asynchronously rollback machine server. Used after an input was skipped.
@@ -2288,9 +2278,7 @@ static void rollback(async_context &actx) {
     Void response;
     reader->Finish(&response, &status, actx.self);
     actx.yield(side_effect::none);
-    if (!status.ok()) {
-        THROW((taint_session{actx.session, std::move(status)}));
-    }
+    CHECK_STATUS_OR_TAINT(status, actx.session, "fast");
 }
 
 /// \brief Asynchronously resets the iflags.y flag after a machine has yielded
@@ -2304,9 +2292,7 @@ static void reset_iflags_y(async_context &actx) {
     Void response;
     reader->Finish(&response, &status, actx.self);
     actx.yield(side_effect::none);
-    if (!status.ok()) {
-        THROW((taint_session{actx.session, std::move(status)}));
-    }
+    CHECK_STATUS_OR_TAINT(status, actx.session, "fast");
 }
 
 /// \brief Asynchronously gets the value of HTIF's fromhost CSR
@@ -2322,9 +2308,7 @@ static uint64_t get_htif_fromhost(async_context &actx) {
     ReadCsrResponse response;
     reader->Finish(&response, &status, actx.self);
     actx.yield(side_effect::none);
-    if (!status.ok()) {
-        THROW((taint_session{actx.session, std::move(status)}));
-    }
+    CHECK_STATUS_OR_TAINT(status, actx.session, "fast");
     return response.value();
 }
 
@@ -2342,9 +2326,7 @@ static void set_htif_fromhost(async_context &actx, uint64_t value) {
     Void response;
     reader->Finish(&response, &status, actx.self);
     actx.yield(side_effect::none);
-    if (!status.ok()) {
-        THROW((taint_session{actx.session, std::move(status)}));
-    }
+    CHECK_STATUS_OR_TAINT(status, actx.session, "fast");
 }
 
 /// \brief Asynchronously sets htif fromhost ack to specify a given request
