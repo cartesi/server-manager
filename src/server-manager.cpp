@@ -836,7 +836,8 @@ static handler_type::pull_type *new_FinishEpoch_handler(handler_context &hctx) {
             session.session_lock_reason = new_lock_reason;
             // If session is tainted, report potential data loss
             if (session.tainted) {
-                THROW((finish_error_yield_none{grpc::StatusCode::DATA_LOSS, "session is tainted"}));
+                THROW((finish_error_yield_none{grpc::StatusCode::DATA_LOSS,
+                    "session was previously tainted ("s + session.taint_status.error_message() + ")"}));
             }
             auto &epochs = session.epochs;
             // If epoch is unknown, a bail out
@@ -2744,7 +2745,8 @@ static handler_type::pull_type *new_AdvanceState_handler(handler_context &hctx) 
             session.session_lock_reason = new_lock_reason;
             // If session is tainted, report potential data loss
             if (session.tainted) {
-                THROW((finish_error_yield_none{grpc::StatusCode::DATA_LOSS, "session is tainted"}));
+                THROW((finish_error_yield_none{grpc::StatusCode::DATA_LOSS,
+                    "session was previously tainted ("s + session.taint_status.error_message() + ")"}));
             }
             // If active epoch does not match expected, bail out
             if (session.active_epoch_index != advance_state_request.active_epoch_index()) {
@@ -2944,7 +2946,8 @@ static handler_type::pull_type *new_InspectState_handler(handler_context &hctx) 
             session.session_lock_reason = new_lock_reason;
             // If session is tainted, report potential data loss
             if (session.tainted) {
-                THROW((finish_error_yield_none{grpc::StatusCode::DATA_LOSS, "session is tainted"}));
+                THROW((finish_error_yield_none{grpc::StatusCode::DATA_LOSS,
+                    "session was previously tainted ("s + session.taint_status.error_message() + ")"}));
             }
             // We should be able to find the active epoch, otherwise bail
             auto &epochs = session.epochs;
@@ -2978,7 +2981,8 @@ static handler_type::pull_type *new_InspectState_handler(handler_context &hctx) 
             }
             // There is a chance the session was tainted between our yielding and being resumed
             if (session.tainted) {
-                THROW((finish_error_yield_none{grpc::StatusCode::DATA_LOSS, "session is tainted"}));
+                THROW((finish_error_yield_none{grpc::StatusCode::DATA_LOSS,
+                    "session is tainted ("s + session.taint_status.error_message() + ")"}));
             }
             async_context actx{session, request_context, hctx.completion_queue.get(), self, yield};
             process_pending_query(hctx, actx, e);
