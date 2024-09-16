@@ -127,35 +127,41 @@ static std::string request_metadata(const grpc::ServerContext &context) {
 #define LOG_CONTEXT(level, context) BOOST_LOG_TRIVIAL(level) << request_metadata(context)
 
 // NOLINTNEXTLINE(cppcoreguidelines-macro-usage)
-#define THROW(e)                                                                                                       \
+#define THROW_CONTEXT(except, context)                                                                                 \
     do {                                                                                                               \
-        BOOST_LOG_TRIVIAL(debug) << "Throwing from " << __FILE__ << ":" << __LINE__ << " at " << __PRETTY_FUNCTION__;  \
-        throw(e);                                                                                                      \
+        LOG_CONTEXT(debug, context) << "Throwing from " << __FILE__ << ":" << __LINE__ << " at "                       \
+                                    << __PRETTY_FUNCTION__;                                                            \
+        throw(except);                                                                                                 \
     } while (0);
 
 // NOLINTNEXTLINE(cppcoreguidelines-macro-usage)
-#define CHECK_STATUS_OR_FAIL(st, d)                                                                                    \
+#define CHECK_STATUS_OR_FAIL(stat, deadline, context)                                                                  \
     do {                                                                                                               \
-        if (!st.ok()) {                                                                                                \
-            if (st.error_code() == grpc::StatusCode::DEADLINE_EXCEEDED) {                                              \
-                THROW((finish_error_yield_none{st.error_code(),                                                        \
-                    "error contacting remote server: "s + d + " deadline exceeded"s}));                                \
+        if (!stat.ok()) {                                                                                              \
+            if (stat.error_code() == grpc::StatusCode::DEADLINE_EXCEEDED) {                                            \
+                THROW_CONTEXT((finish_error_yield_none{stat.error_code(),                                              \
+                                  "error contacting remote server: "s + deadline + " deadline exceeded"s}),            \
+                    context);                                                                                          \
             } else {                                                                                                   \
-                THROW((finish_error_yield_none{st.error_code(),                                                        \
-                    "error contacting remote server: "s + st.error_message()}));                                       \
+                THROW_CONTEXT((finish_error_yield_none{stat.error_code(),                                              \
+                                  "error contacting remote server: "s + stat.error_message()}),                        \
+                    context);                                                                                          \
             }                                                                                                          \
         }                                                                                                              \
     } while (0);
 
 // NOLINTNEXTLINE(cppcoreguidelines-macro-usage)
-#define CHECK_STATUS_OR_TAINT(st, se, d)                                                                               \
+#define CHECK_STATUS_OR_TAINT(stat, session, deadline, context)                                                        \
     do {                                                                                                               \
-        if (!st.ok()) {                                                                                                \
-            if (st.error_code() == grpc::StatusCode::DEADLINE_EXCEEDED) {                                              \
-                THROW((taint_session{se, st.error_code(),                                                              \
-                    "error contacting remote server: "s + d + " deadline exceeded"s}));                                \
+        if (!stat.ok()) {                                                                                              \
+            if (stat.error_code() == grpc::StatusCode::DEADLINE_EXCEEDED) {                                            \
+                THROW_CONTEXT((taint_session{session, stat.error_code(),                                               \
+                                  "error contacting remote server: "s + deadline + " deadline exceeded"s}),            \
+                    context);                                                                                          \
             } else {                                                                                                   \
-                THROW((taint_session{se, st.error_code(), "error contacting remote server: "s + st.error_message()})); \
+                THROW_CONTEXT((taint_session{session, stat.error_code(),                                               \
+                                  "error contacting remote server: "s + stat.error_message()}),                        \
+                    context);                                                                                          \
             }                                                                                                          \
         }                                                                                                              \
     } while (0);
@@ -465,7 +471,12 @@ class auto_lock final {
 public:
     /// \brief Constructor acquires locks
     /// \param lock Reference to lock to be acquired
-    auto_lock(bool &lock, std::string name) : m_lock{lock}, m_name{std::move(name)} {
+    /// \param name Name used to identify lock in error messages
+    /// \param context ServerContext used by handler
+    auto_lock(bool &lock, std::string name, const grpc::ServerContext &context) :
+        m_lock{lock},
+        m_name{std::move(name)},
+        m_context{context} {
         acquire();
     }
 
@@ -477,7 +488,7 @@ public:
     /// \brief Acquire lock if it is not already locked
     void acquire(void) {
         if (m_lock) {
-            THROW((std::runtime_error{m_name + " already locked"}));
+            THROW_CONTEXT((std::runtime_error{m_name + " already locked"}), m_context);
         } else {
             m_lock = true;
         }
@@ -486,7 +497,7 @@ public:
     /// \brief Release lock if it is acquired
     void release(void) {
         if (!m_lock) {
-            THROW((std::runtime_error{m_name + " not locked"}));
+            THROW_CONTEXT((std::runtime_error{m_name + " not locked"}), m_context);
         } else {
             m_lock = false;
         }
@@ -500,6 +511,7 @@ public:
 private:
     bool &m_lock;
     std::string m_name;
+    const grpc::ServerContext &m_context;
 };
 
 /// \brief Type of grpc service name
@@ -683,7 +695,7 @@ static void store(async_context &actx, const std::string &directory) {
     grpc::Status status;
     reader->Finish(&response, &status, actx.self);
     actx.yield(side_effect::none);
-    CHECK_STATUS_OR_FAIL(status, "store");
+    CHECK_STATUS_OR_FAIL(status, "store", actx.request_context);
 }
 
 /// \brief Marks epoch finished and update all proofs now that all leaves are present
@@ -816,48 +828,59 @@ static handler_type::pull_type *new_FinishEpoch_handler(handler_context &hctx) {
             LOG_CONTEXT(info, request_context) << "Received FinishEpoch for session " << id << " epoch " << epoch_index;
             // If a session is unknown, a bail out
             if (sessions.find(id) == sessions.end()) {
-                THROW((finish_error_yield_none{grpc::StatusCode::INVALID_ARGUMENT, "session id not found"}));
+                THROW_CONTEXT((finish_error_yield_none{grpc::StatusCode::INVALID_ARGUMENT, "session id not found"}),
+                    request_context);
             }
             // Otherwise, get session and lock until we exit handler
             auto &session = sessions[id];
             // If active_epoch_index is too large, bail
             if (session.active_epoch_index == UINT64_MAX) {
-                THROW((finish_error_yield_none{grpc::StatusCode::OUT_OF_RANGE, "active epoch index will overflow"}));
+                THROW_CONTEXT(
+                    (finish_error_yield_none{grpc::StatusCode::OUT_OF_RANGE, "active epoch index will overflow"}),
+                    request_context);
             }
             // If session is already locked, bail out
             auto new_lock_reason = get_session_lock_reason("FinishEpoch", request_context.peer());
             if (session.session_lock) {
-                THROW((finish_error_yield_none{grpc::StatusCode::ABORTED,
-                    "concurrent call in session (already locked by " + session.session_lock_reason +
-                        " when attempted lock by " + new_lock_reason + ")"}));
+                THROW_CONTEXT((finish_error_yield_none{grpc::StatusCode::ABORTED,
+                                  "concurrent call in session (already locked by " + session.session_lock_reason +
+                                      " when attempted lock by " + new_lock_reason + ")"}),
+                    request_context);
             }
             // Lock session so other rpcs to the same session are rejected
-            auto_lock session_lock(session.session_lock, "FinishEpoch session lock");
+            auto_lock session_lock(session.session_lock, "FinishEpoch session lock", request_context);
             session.session_lock_reason = new_lock_reason;
             // If session is tainted, report potential data loss
             if (session.tainted) {
-                THROW((finish_error_yield_none{grpc::StatusCode::DATA_LOSS,
-                    "session was previously tainted ("s + session.taint_status.error_message() + ")"}));
+                THROW_CONTEXT((finish_error_yield_none{grpc::StatusCode::DATA_LOSS,
+                                  "session was previously tainted ("s + session.taint_status.error_message() + ")"}),
+                    request_context);
             }
             auto &epochs = session.epochs;
             // If epoch is unknown, a bail out
             if (epochs.find(epoch_index) == epochs.end()) {
-                THROW((finish_error_yield_none{grpc::StatusCode::INVALID_ARGUMENT, "unknown epoch index"}));
+                THROW_CONTEXT((finish_error_yield_none{grpc::StatusCode::INVALID_ARGUMENT, "unknown epoch index"}),
+                    request_context);
             }
             auto &e = epochs[epoch_index];
             // If epoch is not active, bail out
             if (e.state != epoch_state::active) {
-                THROW((finish_error_yield_none{grpc::StatusCode::INVALID_ARGUMENT, "epoch already finished"}));
+                THROW_CONTEXT((finish_error_yield_none{grpc::StatusCode::INVALID_ARGUMENT, "epoch already finished"}),
+                    request_context);
             }
             // If there are still pending inputs to process, bail out
             if (!e.pending_inputs.empty()) {
-                THROW((finish_error_yield_none{grpc::StatusCode::INVALID_ARGUMENT, "epoch still has pending inputs"}));
+                THROW_CONTEXT(
+                    (finish_error_yield_none{grpc::StatusCode::INVALID_ARGUMENT, "epoch still has pending inputs"}),
+                    request_context);
             }
             // If the number of processed inputs does not match the expected, bail out
             if (e.processed_inputs.size() != request.processed_input_count_within_epoch()) {
-                THROW((finish_error_yield_none{grpc::StatusCode::INVALID_ARGUMENT,
-                    "incorrect processed input count (expected " + std::to_string(e.processed_inputs.size()) +
-                        ", got " + std::to_string(request.processed_input_count_within_epoch()) + ")"}));
+                THROW_CONTEXT(
+                    (finish_error_yield_none{grpc::StatusCode::INVALID_ARGUMENT,
+                        "incorrect processed input count (expected " + std::to_string(e.processed_inputs.size()) +
+                            ", got " + std::to_string(request.processed_input_count_within_epoch()) + ")"}),
+                    request_context);
             }
             // Try to store session before we change anything
             if (!request.storage_directory().empty()) {
@@ -910,28 +933,32 @@ static handler_type::pull_type *new_DeleteEpoch_handler(handler_context &hctx) {
             LOG_CONTEXT(info, request_context) << "Received DeleteEpoch for session " << id << " epoch " << epoch_index;
             // If a session is unknown, bail out
             if (sessions.find(id) == sessions.end()) {
-                THROW((finish_error_yield_none{grpc::StatusCode::INVALID_ARGUMENT, "session id not found"}));
+                THROW_CONTEXT((finish_error_yield_none{grpc::StatusCode::INVALID_ARGUMENT, "session id not found"}),
+                    request_context);
             }
             // Otherwise, get session and lock until we exit handler
             auto &session = sessions[id];
             // If session is already locked, bail out
             auto new_lock_reason = get_session_lock_reason("DeleteEpoch", request_context.peer());
             if (session.session_lock) {
-                THROW((finish_error_yield_none{grpc::StatusCode::ABORTED,
-                    "concurrent call in session (already locked by " + session.session_lock_reason +
-                        " when attempted lock by " + new_lock_reason + ")"}));
+                THROW_CONTEXT((finish_error_yield_none{grpc::StatusCode::ABORTED,
+                                  "concurrent call in session (already locked by " + session.session_lock_reason +
+                                      " when attempted lock by " + new_lock_reason + ")"}),
+                    request_context);
             }
             // Lock session so other rpcs to the same session are rejected
-            auto_lock session_lock(session.session_lock, "DeleteEpoch session lock");
+            auto_lock session_lock(session.session_lock, "DeleteEpoch session lock", request_context);
             session.session_lock_reason = new_lock_reason;
             auto it = session.epochs.find(epoch_index);
             // If epoch is unknown, a bail out
             if (it == session.epochs.end()) {
-                THROW((finish_error_yield_none{grpc::StatusCode::INVALID_ARGUMENT, "unknown epoch index"}));
+                THROW_CONTEXT((finish_error_yield_none{grpc::StatusCode::INVALID_ARGUMENT, "unknown epoch index"}),
+                    request_context);
             }
             // If epoch is active, bail out
             if (it->second.state == epoch_state::active || session.active_epoch_index == epoch_index) {
-                THROW((finish_error_yield_none{grpc::StatusCode::INVALID_ARGUMENT, "epoch is active"}));
+                THROW_CONTEXT((finish_error_yield_none{grpc::StatusCode::INVALID_ARGUMENT, "epoch is active"}),
+                    request_context);
             }
             session.epochs.erase(it);
             writer.Finish(response, grpc::Status::OK, self);
@@ -961,7 +988,7 @@ static void shutdown_server(async_context &actx) {
     grpc::Status status;
     reader->Finish(&response, &status, actx.self);
     actx.yield(side_effect::none);
-    CHECK_STATUS_OR_FAIL(status, "fast");
+    CHECK_STATUS_OR_FAIL(status, "fast", actx.request_context);
 }
 
 /// \brief Creates a new handler for the EndSession RPC and starts accepting requests
@@ -990,19 +1017,21 @@ static handler_type::pull_type *new_EndSession_handler(handler_context &hctx) {
             LOG_CONTEXT(info, request_context) << "Received EndSession for session " << id;
             // If a session is unknown, a bail out
             if (sessions.find(id) == sessions.end()) {
-                THROW((finish_error_yield_none{grpc::StatusCode::INVALID_ARGUMENT, "session id not found"}));
+                THROW_CONTEXT((finish_error_yield_none{grpc::StatusCode::INVALID_ARGUMENT, "session id not found"}),
+                    request_context);
             }
             // Otherwise, get session and lock until we exit handler
             auto &session = sessions[id];
             // If session is already locked, bail out
             auto new_lock_reason = get_session_lock_reason("EndSession", request_context.peer());
             if (session.session_lock) {
-                THROW((finish_error_yield_none{grpc::StatusCode::ABORTED,
-                    "concurrent call in session (already locked by " + session.session_lock_reason +
-                        " when attempted lock by " + new_lock_reason + ")"}));
+                THROW_CONTEXT((finish_error_yield_none{grpc::StatusCode::ABORTED,
+                                  "concurrent call in session (already locked by " + session.session_lock_reason +
+                                      " when attempted lock by " + new_lock_reason + ")"}),
+                    request_context);
             }
             // Lock session so other rpcs to the same session are rejected
-            auto_lock session_lock(session.session_lock, "EndSession session lock");
+            auto_lock session_lock(session.session_lock, "EndSession session lock", request_context);
             session.session_lock_reason = new_lock_reason;
             async_context actx{session, request_context, cq, self, yield};
             // If the session is tainted, nothing is going on with it, so we can erase it
@@ -1011,17 +1040,20 @@ static handler_type::pull_type *new_EndSession_handler(handler_context &hctx) {
                 auto &epochs = session.epochs;
                 auto &e = epochs[session.active_epoch_index];
                 if (!e.pending_inputs.empty()) {
-                    THROW((finish_error_yield_none{grpc::StatusCode::INVALID_ARGUMENT,
-                        "active epoch has pending inputs"}));
+                    THROW_CONTEXT((finish_error_yield_none{grpc::StatusCode::INVALID_ARGUMENT,
+                                      "active epoch has pending inputs"}),
+                        request_context);
                 }
                 if (!e.processed_inputs.empty()) {
-                    THROW((finish_error_yield_none{grpc::StatusCode::INVALID_ARGUMENT,
-                        "active epoch has processed inputs"}));
+                    THROW_CONTEXT((finish_error_yield_none{grpc::StatusCode::INVALID_ARGUMENT,
+                                      "active epoch has processed inputs"}),
+                        request_context);
                 }
             }
             // This is just for peace of mind, there no way this branch can enter
             if (session.processing_lock) {
-                THROW((finish_error_yield_none{grpc::StatusCode::INTERNAL, "session is processing inputs!"}));
+                THROW_CONTEXT((finish_error_yield_none{grpc::StatusCode::INTERNAL, "session is processing inputs!"}),
+                    request_context);
             }
             shutdown_server(actx);
             if (session.tainted) {
@@ -1072,19 +1104,21 @@ static handler_type::pull_type *new_GetSessionStatus_handler(handler_context &hc
         try {
             // If a session is unknown, a bail out
             if (sessions.find(id) == sessions.end()) {
-                THROW((finish_error_yield_none{grpc::StatusCode::INVALID_ARGUMENT, "session id not found!"}));
+                THROW_CONTEXT((finish_error_yield_none{grpc::StatusCode::INVALID_ARGUMENT, "session id not found!"}),
+                    request_context);
             }
             // Otherwise, get session and lock until we exit handler
             auto &session = sessions[id];
             // If session is already locked, bail out
             auto new_lock_reason = get_session_lock_reason("GetSessionStatus", request_context.peer());
             if (session.session_lock) {
-                THROW((finish_error_yield_none{grpc::StatusCode::ABORTED,
-                    "concurrent call in session (already locked by " + session.session_lock_reason +
-                        " when attempted lock by " + new_lock_reason + ")"}));
+                THROW_CONTEXT((finish_error_yield_none{grpc::StatusCode::ABORTED,
+                                  "concurrent call in session (already locked by " + session.session_lock_reason +
+                                      " when attempted lock by " + new_lock_reason + ")"}),
+                    request_context);
             }
             // Lock session so other rpcs to the same session are rejected
-            auto_lock session_lock(session.session_lock, "GetSessionStatus session lock");
+            auto_lock session_lock(session.session_lock, "GetSessionStatus session lock", request_context);
             session.session_lock_reason = new_lock_reason;
             response.set_session_id(id);
             response.set_active_epoch_index(session.active_epoch_index);
@@ -1241,24 +1275,27 @@ static handler_type::pull_type *new_GetEpochStatus_handler(handler_context &hctx
                 << "Received GetEpochStatus for session " << id << " epoch " << epoch_index;
             // If a session is unknown, a bail out
             if (sessions.find(id) == sessions.end()) {
-                THROW((finish_error_yield_none{grpc::StatusCode::INVALID_ARGUMENT, "session id not found"}));
+                THROW_CONTEXT((finish_error_yield_none{grpc::StatusCode::INVALID_ARGUMENT, "session id not found"}),
+                    request_context);
             }
             // Otherwise, get session and lock until we exit handler
             auto &session = sessions[id];
             // If session is already locked, bail out
             auto new_lock_reason = get_session_lock_reason("GetEpochStatus", request_context.peer());
             if (session.session_lock) {
-                THROW((finish_error_yield_none{grpc::StatusCode::ABORTED,
-                    "concurrent call in session (already locked by " + session.session_lock_reason +
-                        " when attempted lock by " + new_lock_reason + ")"}));
+                THROW_CONTEXT((finish_error_yield_none{grpc::StatusCode::ABORTED,
+                                  "concurrent call in session (already locked by " + session.session_lock_reason +
+                                      " when attempted lock by " + new_lock_reason + ")"}),
+                    request_context);
             }
             // Lock session so other rpcs to the same session are rejected
-            auto_lock session_lock(session.session_lock, "GetEpochStatus session lock");
+            auto_lock session_lock(session.session_lock, "GetEpochStatus session lock", request_context);
             session.session_lock_reason = new_lock_reason;
             auto &epochs = session.epochs;
             // If a session is unknown, a bail out
             if (epochs.find(epoch_index) == epochs.end()) {
-                THROW((finish_error_yield_none{grpc::StatusCode::INVALID_ARGUMENT, "unknown epoch index"}));
+                THROW_CONTEXT((finish_error_yield_none{grpc::StatusCode::INVALID_ARGUMENT, "unknown epoch index"}),
+                    request_context);
             }
             auto &e = epochs[epoch_index];
             response.set_session_id(id);
@@ -1361,11 +1398,12 @@ static void check_server_version(async_context &actx) {
     grpc::Status status;
     reader->Finish(&response, &status, actx.self);
     actx.yield(side_effect::none);
-    CHECK_STATUS_OR_FAIL(status, "fast");
+    CHECK_STATUS_OR_FAIL(status, "fast", actx.request_context);
     // If version is incompatible, bail out
     if (response.version().major() != machine_version_major || response.version().minor() != machine_version_minor) {
-        THROW((finish_error_yield_none{grpc::StatusCode::FAILED_PRECONDITION,
-            "manager is incompatible with machine server"}));
+        THROW_CONTEXT((finish_error_yield_none{grpc::StatusCode::FAILED_PRECONDITION,
+                          "manager is incompatible with machine server"}),
+            actx.request_context);
     }
 }
 
@@ -1383,7 +1421,7 @@ static void check_server_machine(async_context &actx, const std::string &directo
     grpc::Status status;
     reader->Finish(&response, &status, actx.self);
     actx.yield(side_effect::none);
-    CHECK_STATUS_OR_FAIL(status, "machine (instantiation)");
+    CHECK_STATUS_OR_FAIL(status, "machine (instantiation)", actx.request_context);
 }
 
 /// \brief Asynchronously gets the initial machine configuration from server
@@ -1399,7 +1437,7 @@ static MachineConfig get_initial_config(async_context &actx) {
     grpc::Status status;
     reader->Finish(&response, &status, actx.self);
     actx.yield(side_effect::none);
-    CHECK_STATUS_OR_FAIL(status, "fast");
+    CHECK_STATUS_OR_FAIL(status, "fast", actx.request_context);
     return response.config();
 }
 
@@ -1407,56 +1445,64 @@ static MachineConfig get_initial_config(async_context &actx) {
 /// \param request_context ServerContext used by handler
 /// \param name Name of memory range
 /// \param config MemoryRangeConfig returned by server
-static void check_memory_range_config(grpc::ServerContext &request_context, memory_range_description_type &desc,
+static void check_memory_range_config(const grpc::ServerContext &request_context, memory_range_description_type &desc,
     const std::string &name, const MemoryRangeConfig &config) {
     LOG_CONTEXT(debug, request_context) << "  Checking " << name << " buffer config";
     desc.config = config;
     if (desc.config.shared()) {
-        THROW((finish_error_yield_none{grpc::StatusCode::INVALID_ARGUMENT, name + " buffer cannot be shared"}));
+        THROW_CONTEXT((finish_error_yield_none{grpc::StatusCode::INVALID_ARGUMENT, name + " buffer cannot be shared"}),
+            request_context);
     }
     // Clear the image_filename because we use the config with replace_memory_range to clear the memory range
     desc.config.clear_image_filename();
     desc.length = desc.config.length();
     if (!is_power_of_two(desc.length)) {
-        THROW((finish_error_yield_none{grpc::StatusCode::OUT_OF_RANGE,
-            name + " memory range length not a power of two (" + std::to_string(desc.length) + ")"}));
+        THROW_CONTEXT((finish_error_yield_none{grpc::StatusCode::OUT_OF_RANGE,
+                          name + " memory range length not a power of two (" + std::to_string(desc.length) + ")"}),
+            request_context);
     }
     desc.log2_size = ilog2(desc.length);
     desc.start = desc.config.start();
     auto aligned_start = (desc.start >> desc.log2_size) << desc.log2_size;
     if ((desc.start != aligned_start)) {
-        THROW((finish_error_yield_none{grpc::StatusCode::OUT_OF_RANGE,
-            name + " memory range start not aligned to its power of two size"}));
+        THROW_CONTEXT((finish_error_yield_none{grpc::StatusCode::OUT_OF_RANGE,
+                          name + " memory range start not aligned to its power of two size"}),
+            request_context);
     }
 }
 
 /// \brief Checks HTIF device configuration is valid for rollups
 /// \param htif HTIFConfig returned by server
-static void check_htif_config(const HTIFConfig &htif) {
+static void check_htif_config(const grpc::ServerContext &request_context, const HTIFConfig &htif) {
     if (!htif.yield_manual()) {
-        THROW((finish_error_yield_none{grpc::StatusCode::INVALID_ARGUMENT, "yield manual must be enabled"}));
+        THROW_CONTEXT((finish_error_yield_none{grpc::StatusCode::INVALID_ARGUMENT, "yield manual must be enabled"}),
+            request_context);
     }
     if (!htif.yield_automatic()) {
-        THROW((finish_error_yield_none{grpc::StatusCode::INVALID_ARGUMENT, "yield automatic must be enabled"}));
+        THROW_CONTEXT((finish_error_yield_none{grpc::StatusCode::INVALID_ARGUMENT, "yield automatic must be enabled"}),
+            request_context);
     }
     if (htif.console_getchar()) {
-        THROW((finish_error_yield_none{grpc::StatusCode::INVALID_ARGUMENT, "console getchar must be disabled"}));
+        THROW_CONTEXT((finish_error_yield_none{grpc::StatusCode::INVALID_ARGUMENT, "console getchar must be disabled"}),
+            request_context);
     }
 }
 
 /// \brief Checks if rollup configuration is valid for rollups
 /// \param config MachineConfig returned by server
-static void check_rollup_config(grpc::ServerContext &request_context, session_type &session,
+static void check_rollup_config(const grpc::ServerContext &request_context, session_type &session,
     const MachineConfig &config) {
     // If rollup config, bail out
     if (!config.has_rollup()) {
-        THROW((finish_error_yield_none{grpc::StatusCode::INVALID_ARGUMENT, "missing server rollup config"}));
+        THROW_CONTEXT((finish_error_yield_none{grpc::StatusCode::INVALID_ARGUMENT, "missing server rollup config"}),
+            request_context);
     }
     const auto &rollup = config.rollup();
     if (rollup.rx_buffer().length() == 0 && rollup.tx_buffer().length() == 0 && rollup.input_metadata().length() == 0 &&
         rollup.voucher_hashes().length() == 0 && rollup.notice_hashes().length() == 0) {
-        THROW(
-            (finish_error_yield_none{grpc::StatusCode::INVALID_ARGUMENT, "server rollup config was not initialized"}));
+        THROW_CONTEXT(
+            (finish_error_yield_none{grpc::StatusCode::INVALID_ARGUMENT, "server rollup config was not initialized"}),
+            request_context);
     }
     check_memory_range_config(request_context, session.memory_range.tx_buffer, "tx buffer", rollup.tx_buffer());
     check_memory_range_config(request_context, session.memory_range.rx_buffer, "rx buffer", rollup.rx_buffer());
@@ -1470,14 +1516,15 @@ static void check_rollup_config(grpc::ServerContext &request_context, session_ty
 
 /// \brief Start and checks the server stub
 /// \param session Associated session
-static void check_server_stub(session_type &session) {
+static void check_server_stub(const grpc::ServerContext &request_context, session_type &session) {
     // Instantiate client connection
     session.server_stub =
         Machine::NewStub(grpc::CreateChannel(session.server_address, grpc::InsecureChannelCredentials()));
     // If unable to create stub, bail out
     if (!session.server_stub) {
-        THROW((finish_error_yield_none{grpc::StatusCode::RESOURCE_EXHAUSTED,
-            "unable to create machine stub for session"}));
+        THROW_CONTEXT((finish_error_yield_none{grpc::StatusCode::RESOURCE_EXHAUSTED,
+                          "unable to create machine stub for session"}),
+            request_context);
     }
 }
 
@@ -1550,15 +1597,16 @@ void trigger_and_wait_checkin(handler_context &hctx, async_context &actx, T trig
     // Check if the check-in failed / reached it deadline
     if (!it->second.status.value()) {
         hctx.sessions_waiting_checkin.erase(it);
-        THROW((taint_session{actx.session, grpc::StatusCode::INTERNAL,
-            "Remote machine check-in has failed on session: " + actx.session.id}));
+        THROW_CONTEXT((taint_session{actx.session, grpc::StatusCode::INTERNAL,
+                          "Remote machine check-in has failed on session: " + actx.session.id}),
+            actx.request_context);
     }
     // Check-in was successful
     hctx.sessions_waiting_checkin.erase(it);
     LOG_CONTEXT(debug, actx.request_context)
         << "  Check-in for session " << actx.session.id << " passed with address " << actx.session.server_address;
     // update server stub
-    check_server_stub(actx.session);
+    check_server_stub(actx.request_context, actx.session);
 }
 
 /// \brief Extracts the data field in HTIF's fromhost/tohost register value
@@ -1594,26 +1642,30 @@ static constexpr uint64_t htif_data_field(uint64_t reg) {
 static void check_htif_yield_manual(async_context &actx, const std::string &regname, uint64_t value) {
     auto dev = htif_dev_field(value);
     if (dev != HTIF_DEVICE_YIELD) {
-        THROW((taint_session{actx.session, grpc::StatusCode::INTERNAL,
-            "invalid dev field in " + regname + " (expected " + std::to_string(HTIF_DEVICE_YIELD) + ", got " +
-                std::to_string(dev) + ")"}));
+        THROW_CONTEXT((taint_session{actx.session, grpc::StatusCode::INTERNAL,
+                          "invalid dev field in " + regname + " (expected " + std::to_string(HTIF_DEVICE_YIELD) +
+                              ", got " + std::to_string(dev) + ")"}),
+            actx.request_context);
     }
     auto cmd = htif_cmd_field(value);
     if (cmd != HTIF_YIELD_MANUAL) {
-        THROW((taint_session{actx.session, grpc::StatusCode::INTERNAL,
-            "invalid cmd field in " + regname + " (expected " + std::to_string(HTIF_YIELD_MANUAL) + ", got " +
-                std::to_string(cmd) + ")"}));
+        THROW_CONTEXT((taint_session{actx.session, grpc::StatusCode::INTERNAL,
+                          "invalid cmd field in " + regname + " (expected " + std::to_string(HTIF_YIELD_MANUAL) +
+                              ", got " + std::to_string(cmd) + ")"}),
+            actx.request_context);
     }
 }
 
 /// \brief Checks if HTIF's tohost matches an yield reason equal to accepted
+/// \param actx Context for async operations
 /// \param value Register value
-static void check_yield_reason_accepted(uint64_t value) {
+static void check_yield_reason_accepted(async_context &actx, uint64_t value) {
     auto data = htif_data_field(value) << 16 >> 48;
     if (data != HTIF_YIELD_REASON_RX_ACCEPTED) {
-        THROW((finish_error_yield_none{grpc::StatusCode::INVALID_ARGUMENT,
-            "invalid data field in htif.tohost (expected " + std::to_string(HTIF_YIELD_REASON_RX_ACCEPTED) + ", got " +
-                std::to_string(data) + ")"}));
+        THROW_CONTEXT((finish_error_yield_none{grpc::StatusCode::INVALID_ARGUMENT,
+                          "invalid data field in htif.tohost (expected " +
+                              std::to_string(HTIF_YIELD_REASON_RX_ACCEPTED) + ", got " + std::to_string(data) + ")"}),
+            actx.request_context);
     }
 }
 
@@ -1631,7 +1683,7 @@ static uint64_t get_current_mcycle(async_context &actx) {
     ReadCsrResponse response;
     reader->Finish(&response, &status, actx.self);
     actx.yield(side_effect::none);
-    CHECK_STATUS_OR_FAIL(status, "fast");
+    CHECK_STATUS_OR_FAIL(status, "fast", actx.request_context);
     return response.value();
 }
 
@@ -1650,15 +1702,17 @@ static uint64_t check_is_yielded(async_context &actx) {
     RunResponse run_response;
     reader->Finish(&run_response, &run_status, actx.self);
     actx.yield(side_effect::none);
-    CHECK_STATUS_OR_FAIL(run_status, "fast");
+    CHECK_STATUS_OR_FAIL(run_status, "fast", actx.request_context);
     if (!run_response.iflags_y()) {
-        THROW((finish_error_yield_none{grpc::StatusCode::INVALID_ARGUMENT, "expected manual yield"}));
+        THROW_CONTEXT((finish_error_yield_none{grpc::StatusCode::INVALID_ARGUMENT, "expected manual yield"}),
+            actx.request_context);
     }
     if (current_mcycle != run_response.mcycle()) {
-        THROW((finish_error_yield_none{grpc::StatusCode::INTERNAL, "mcycle shouldn't have changed"}));
+        THROW_CONTEXT((finish_error_yield_none{grpc::StatusCode::INTERNAL, "mcycle shouldn't have changed"}),
+            actx.request_context);
     }
     check_htif_yield_manual(actx, "htif.tohost", run_response.tohost());
-    check_yield_reason_accepted(run_response.tohost());
+    check_yield_reason_accepted(actx, run_response.tohost());
     return run_response.mcycle();
 }
 
@@ -1673,7 +1727,7 @@ static hash_type get_root_hash(async_context &actx) {
     GetRootHashResponse response;
     reader->Finish(&response, &status, actx.self);
     actx.yield(side_effect::none);
-    CHECK_STATUS_OR_TAINT(status, actx.session, "machine (root hash)");
+    CHECK_STATUS_OR_TAINT(status, actx.session, "machine (root hash)", actx.request_context);
     return cartesi::get_proto_hash(response.hash());
 }
 
@@ -1731,53 +1785,64 @@ static handler_type::pull_type *new_StartSession_handler(handler_context &hctx) 
             auto &session = (sessions[id] = get_proto_session(start_session_request));
             // Lock session so other rpcs to the same session are rejected
             auto new_lock_reason = get_session_lock_reason("StartSession", request_context.peer());
-            auto_lock lock(session.session_lock, "StartSession session lock");
+            auto_lock lock(session.session_lock, "StartSession session lock", request_context);
             session.session_lock_reason = new_lock_reason;
             // If no machine config or directory is set on machine request, bail out
             if (start_session_request.machine_directory().empty()) {
-                THROW((finish_error_yield_none{StatusCode::INVALID_ARGUMENT, "missing machine directory"}));
+                THROW_CONTEXT((finish_error_yield_none{StatusCode::INVALID_ARGUMENT, "missing machine directory"}),
+                    request_context);
             }
             // If active_epoch_index is too large, bail
             if (session.active_epoch_index == UINT64_MAX) {
-                THROW((finish_error_yield_none{grpc::StatusCode::OUT_OF_RANGE, "active epoch index will overflow"}));
+                THROW_CONTEXT(
+                    (finish_error_yield_none{grpc::StatusCode::OUT_OF_RANGE, "active epoch index will overflow"}),
+                    request_context);
             }
             // If no deadline config, bail out
             if (!start_session_request.has_server_deadline()) {
-                THROW((finish_error_yield_none{StatusCode::INVALID_ARGUMENT, "missing server deadline config"}));
+                THROW_CONTEXT((finish_error_yield_none{StatusCode::INVALID_ARGUMENT, "missing server deadline config"}),
+                    request_context);
             }
             // If advance_state deadline is less than advance_state_increment deadline, bail out
             if (session.server_deadline.advance_state < session.server_deadline.advance_state_increment) {
-                THROW((finish_error_yield_none{StatusCode::INVALID_ARGUMENT,
-                    "advance state deadline is less than advance state increment deadline"}));
+                THROW_CONTEXT((finish_error_yield_none{StatusCode::INVALID_ARGUMENT,
+                                  "advance state deadline is less than advance state increment deadline"}),
+                    request_context);
             }
             // If inspect_state deadline is less than inspect_state_increment deadline, bail out
             if (session.server_deadline.inspect_state < session.server_deadline.inspect_state_increment) {
-                THROW((finish_error_yield_none{StatusCode::INVALID_ARGUMENT,
-                    "inspect state deadline is less than inspect state increment deadline"}));
+                THROW_CONTEXT((finish_error_yield_none{StatusCode::INVALID_ARGUMENT,
+                                  "inspect state deadline is less than inspect state increment deadline"}),
+                    request_context);
             }
             // If no cycles config, bail out
             if (!start_session_request.has_server_cycles()) {
-                THROW((finish_error_yield_none{StatusCode::INVALID_ARGUMENT, "missing server cycles config"}));
+                THROW_CONTEXT((finish_error_yield_none{StatusCode::INVALID_ARGUMENT, "missing server cycles config"}),
+                    request_context);
             }
             // If advance state have no cycles to complete, bail out
             if (session.server_cycles.max_advance_state == 0 || session.server_cycles.advance_state_increment == 0) {
-                THROW((finish_error_yield_none{StatusCode::INVALID_ARGUMENT,
-                    "max cycles per advance state or cycles per advance state increment is zero"}));
+                THROW_CONTEXT((finish_error_yield_none{StatusCode::INVALID_ARGUMENT,
+                                  "max cycles per advance state or cycles per advance state increment is zero"}),
+                    request_context);
             }
             // If max cycles per advance state is less than cycles per advance state increment, bail out
             if (session.server_cycles.max_advance_state < session.server_cycles.advance_state_increment) {
-                THROW((finish_error_yield_none{StatusCode::INVALID_ARGUMENT,
-                    "max cycles per advance state is less than cycles per advance state increment"}));
+                THROW_CONTEXT((finish_error_yield_none{StatusCode::INVALID_ARGUMENT,
+                                  "max cycles per advance state is less than cycles per advance state increment"}),
+                    request_context);
             }
             // If inspect state have no cycles to complete, bail out
             if (session.server_cycles.max_inspect_state == 0 || session.server_cycles.inspect_state_increment == 0) {
-                THROW((finish_error_yield_none{StatusCode::INVALID_ARGUMENT,
-                    "max cycles per inspect state or cycles per inspect state increment is zero"}));
+                THROW_CONTEXT((finish_error_yield_none{StatusCode::INVALID_ARGUMENT,
+                                  "max cycles per inspect state or cycles per inspect state increment is zero"}),
+                    request_context);
             }
             // If max cycles per inspect state is less than cycles per inspect state increment, bail out
             if (session.server_cycles.max_inspect_state < session.server_cycles.inspect_state_increment) {
-                THROW((finish_error_yield_none{StatusCode::INVALID_ARGUMENT,
-                    "max cycles per inspect state is less than cycles per inspect state increment"}));
+                THROW_CONTEXT((finish_error_yield_none{StatusCode::INVALID_ARGUMENT,
+                                  "max cycles per inspect state is less than cycles per inspect state increment"}),
+                    request_context);
             }
             // Wait for machine server to checkin after spawned
             async_context actx{session, request_context, cq, self, yield};
@@ -1791,16 +1856,17 @@ static handler_type::pull_type *new_StartSession_handler(handler_context &hctx) 
                     auto server_process = boost::process::child(cmdline, actx.session.server_process_group);
                     server_process.detach();
                 } catch (boost::process::process_error &e) {
-                    THROW((finish_error_yield_none{StatusCode::INTERNAL,
-                        "failed spawning remote-cartesi-machine with command-line '" + cmdline + "' (" + e.what() +
-                            ")"}));
+                    THROW_CONTEXT((finish_error_yield_none{StatusCode::INTERNAL,
+                                      "failed spawning remote-cartesi-machine with command-line '" + cmdline + "' (" +
+                                          e.what() + ")"}),
+                        actx.request_context);
                 }
             });
             try {
                 check_server_version(actx);
                 check_server_machine(actx, start_session_request.machine_directory());
                 auto config = get_initial_config(actx);
-                check_htif_config(config.htif());
+                check_htif_config(request_context, config.htif());
                 check_rollup_config(request_context, session, config);
                 // Machine may have started at mcycle != 0, so we save it for
                 // when we need to run an input for at most max_cycles_per_input
@@ -1858,7 +1924,7 @@ static void clear_memory_ranges(async_context &actx) {
         reader->Finish(&replace_response, &replace_status, actx.self);
         actx.yield(side_effect::none);
         (void) replace_request.release_config();
-        CHECK_STATUS_OR_TAINT(replace_status, actx.session, "fast");
+        CHECK_STATUS_OR_TAINT(replace_status, actx.session, "fast", actx.request_context);
     }
 }
 
@@ -1876,7 +1942,7 @@ static void clear_rx_buffer(async_context &actx) {
     reader->Finish(&replace_response, &replace_status, actx.self);
     actx.yield(side_effect::none);
     (void) replace_request.release_config();
-    CHECK_STATUS_OR_TAINT(replace_status, actx.session, "fast");
+    CHECK_STATUS_OR_TAINT(replace_status, actx.session, "fast", actx.request_context);
 }
 
 /// \brief Asynchronously writes data to a memory range
@@ -1897,7 +1963,7 @@ static void write_memory_range(async_context &actx, IT begin, IT end, const Memo
     grpc::Status write_status;
     reader->Finish(&write_response, &write_status, actx.self);
     actx.yield(side_effect::none);
-    CHECK_STATUS_OR_TAINT(write_status, actx.session, "fast");
+    CHECK_STATUS_OR_TAINT(write_status, actx.session, "fast", actx.request_context);
 }
 
 /// \brief Asynchronously writes an EVM ABI string to a memory range
@@ -1926,7 +1992,7 @@ static void write_evm_abi_string(async_context &actx, IT begin, IT end, const Me
     grpc::Status write_status;
     reader->Finish(&write_response, &write_status, actx.self);
     actx.yield(side_effect::none);
-    CHECK_STATUS_OR_TAINT(write_status, actx.session, "fast");
+    CHECK_STATUS_OR_TAINT(write_status, actx.session, "fast", actx.request_context);
 }
 
 /// \brief Asynchronously runs machine server up to given max cycle
@@ -1960,7 +2026,7 @@ static std::optional<RunResponse> run_machine(async_context &actx, uint64_t curr
         RunResponse run_response;
         reader->Finish(&run_response, &run_status, actx.self);
         actx.yield(side_effect::none);
-        CHECK_STATUS_OR_TAINT(run_status, actx.session, "advance/inspect state increment");
+        CHECK_STATUS_OR_TAINT(run_status, actx.session, "advance/inspect state increment", actx.request_context);
         // Check if yielded or halted or reached max_mcycle and return
         if (run_response.iflags_y() || run_response.iflags_x() || run_response.iflags_h() ||
             run_response.mcycle() >= max_mcycle) {
@@ -1993,9 +2059,10 @@ static std::string read_memory_range(async_context &actx, const MemoryRangeConfi
     ReadMemoryResponse read_response;
     reader->Finish(&read_response, &read_status, actx.self);
     actx.yield(side_effect::none);
-    CHECK_STATUS_OR_TAINT(read_status, actx.session, "fast");
+    CHECK_STATUS_OR_TAINT(read_status, actx.session, "fast", actx.request_context);
     if (read_response.data().size() != read_request.length()) {
-        THROW((taint_session{actx.session, grpc::StatusCode::INTERNAL, "read returned wrong number of bytes!"}));
+        THROW_CONTEXT((taint_session{actx.session, grpc::StatusCode::INTERNAL, "read returned wrong number of bytes!"}),
+            actx.request_context);
     }
     // Here we can't use copy elision because read_response holds the string we
     // want to move out
@@ -2036,42 +2103,49 @@ static uint64_t count_null_terminated_entries(const std::string &data, int entry
 }
 
 /// \brief Converts a string to a hash
+/// \param request_context ServerContext used by handler
+/// \param session Session to taint in case of error
 /// \param begin Start of hash data
 /// \param end one-past-end of hash data
 /// \return Converted hash
 template <typename IT>
-static inline hash_type get_hash(session_type &session, IT begin, IT end) {
+static inline hash_type get_hash(const grpc::ServerContext &context, session_type &session, IT begin, IT end) {
     hash_type hash;
     if (static_cast<size_t>(end - begin) != hash.size()) {
-        THROW((taint_session{session, grpc::StatusCode::OUT_OF_RANGE, "invalid hash length"}));
+        THROW_CONTEXT((taint_session{session, grpc::StatusCode::OUT_OF_RANGE, "invalid hash length"}), context);
     }
     std::copy(begin, end, hash.begin());
     return hash;
 }
 
 /// \brief Converts a string to an EVM address
+/// \param request_context ServerContext used by handler
+/// \param session Session to taint in case of error
 /// \param begin Start of address data
 /// \param end one-past-end of address data
 /// \return Converted address
 template <typename IT>
-static inline evm_address_type get_evm_address(session_type &session, IT begin, IT end) {
+static inline evm_address_type get_evm_address(const grpc::ServerContext &context, session_type &session, IT begin,
+    IT end) {
     evm_address_type a;
     if (static_cast<size_t>(end - begin) != a.size()) {
-        THROW((taint_session{session, grpc::StatusCode::OUT_OF_RANGE, "invalid address length"}));
+        THROW_CONTEXT((taint_session{session, grpc::StatusCode::OUT_OF_RANGE, "invalid address length"}), context);
     }
     std::copy(begin, end, a.begin());
     return a;
 }
 
 /// \brief Converts a payload length from large big-endian to a native 64-bit integer
+/// \param request_context ServerContext used by handler
 /// \param session Session to taint in case of error
 /// \param begin Start of large big-endian number
 /// \param end one-past-end of large big-endian number
 /// \return Converted 64-bit native integer
-static inline uint64_t get_payload_length(session_type &session, const char *begin, const char *end) {
+static inline uint64_t get_payload_length(const grpc::ServerContext &context, session_type &session, const char *begin,
+    const char *end) {
     using namespace boost::endian;
     if (!is_null(begin, end - sizeof(uint64_t))) {
-        THROW((taint_session{session, grpc::StatusCode::OUT_OF_RANGE, "payload length too large"}));
+        THROW_CONTEXT((taint_session{session, grpc::StatusCode::OUT_OF_RANGE, "payload length too large"}), context);
     }
     return endian_load<uint64_t, sizeof(uint64_t), order::big>(
         // NOLINTNEXTLINE(cppcoreguidelines-pro-type-reinterpret-cast)
@@ -2095,17 +2169,19 @@ static evm_address_type read_voucher_address_and_payload_data_length(async_conte
     ReadMemoryResponse read_response;
     reader->Finish(&read_response, &read_status, actx.self);
     actx.yield(side_effect::none);
-    CHECK_STATUS_OR_TAINT(read_status, actx.session, "fast");
+    CHECK_STATUS_OR_TAINT(read_status, actx.session, "fast", actx.request_context);
     if (read_response.data().size() != read_request.length()) {
-        THROW((taint_session{actx.session, grpc::StatusCode::INTERNAL, "read returned wrong number of bytes!"}));
+        THROW_CONTEXT((taint_session{actx.session, grpc::StatusCode::INTERNAL, "read returned wrong number of bytes!"}),
+            actx.request_context);
     }
     const auto *payload_data_length_begin =
         read_response.data().data() + EVM_ABI_ADDRESS_LENGTH + EVM_ABI_OFFSET_LENGTH;
     const auto *payload_data_length_end = payload_data_length_begin + EVM_ABI_LENGTH_LENGTH;
-    *payload_data_length = get_payload_length(actx.session, payload_data_length_begin, payload_data_length_end);
+    *payload_data_length =
+        get_payload_length(actx.request_context, actx.session, payload_data_length_begin, payload_data_length_end);
     auto address_begin = read_response.data().begin() + EVM_ABI_ADDRESS_LENGTH - EVM_ADDRESS_LENGTH;
     auto address_end = address_begin + EVM_ADDRESS_LENGTH;
-    return get_evm_address(actx.session, address_begin, address_end);
+    return get_evm_address(actx.request_context, actx.session, address_begin, address_end);
 }
 
 /// \brief Asynchronously reads an voucher payload data from the tx buffer
@@ -2116,7 +2192,9 @@ static std::string read_voucher_payload_data(async_context &actx, uint64_t paylo
     auto payload_data_offset = VOUCHER_HEADER_LENGTH;
     const MemoryRangeConfig &range = actx.session.memory_range.tx_buffer.config;
     if (payload_data_length > actx.session.memory_range.tx_buffer.length - payload_data_offset) {
-        THROW((taint_session{actx.session, grpc::StatusCode::OUT_OF_RANGE, "voucher payload length is out of bounds"}));
+        THROW_CONTEXT(
+            (taint_session{actx.session, grpc::StatusCode::OUT_OF_RANGE, "voucher payload length is out of bounds"}),
+            actx.request_context);
     }
     ReadMemoryRequest read_request;
     read_request.set_address(range.start() + payload_data_offset);
@@ -2128,9 +2206,10 @@ static std::string read_voucher_payload_data(async_context &actx, uint64_t paylo
     ReadMemoryResponse read_response;
     reader->Finish(&read_response, &read_status, actx.self);
     actx.yield(side_effect::none);
-    CHECK_STATUS_OR_TAINT(read_status, actx.session, "fast");
+    CHECK_STATUS_OR_TAINT(read_status, actx.session, "fast", actx.request_context);
     if (read_response.data().size() != payload_data_length) {
-        THROW((taint_session{actx.session, grpc::StatusCode::INTERNAL, "read returned wrong number of bytes!"}));
+        THROW_CONTEXT((taint_session{actx.session, grpc::StatusCode::INTERNAL, "read returned wrong number of bytes!"}),
+            actx.request_context);
     }
     // Here we can't use copy elision because read_response holds the string we want to move out
     auto *data = read_response.release_data();
@@ -2152,13 +2231,14 @@ static uint64_t read_tx_payload_data_length(async_context &actx) {
     ReadMemoryResponse read_response;
     reader->Finish(&read_response, &read_status, actx.self);
     actx.yield(side_effect::none);
-    CHECK_STATUS_OR_TAINT(read_status, actx.session, "fast");
+    CHECK_STATUS_OR_TAINT(read_status, actx.session, "fast", actx.request_context);
     if (read_response.data().size() != read_request.length()) {
-        THROW((taint_session{actx.session, grpc::StatusCode::INTERNAL, "read returned wrong number of bytes!"}));
+        THROW_CONTEXT((taint_session{actx.session, grpc::StatusCode::INTERNAL, "read returned wrong number of bytes!"}),
+            actx.request_context);
     }
     const auto *payload_data_length_begin = read_response.data().data() + EVM_ABI_OFFSET_LENGTH;
     const auto *payload_data_length_end = payload_data_length_begin + EVM_ABI_LENGTH_LENGTH;
-    return get_payload_length(actx.session, payload_data_length_begin, payload_data_length_end);
+    return get_payload_length(actx.request_context, actx.session, payload_data_length_begin, payload_data_length_end);
 }
 
 /// \brief Asynchronously reads a notice or report payload data from the tx buffer
@@ -2169,7 +2249,9 @@ static std::string read_tx_payload_data(async_context &actx, uint64_t payload_da
     auto payload_data_offset = EVM_ABI_STRING_HEADER_LENGTH;
     const MemoryRangeConfig &range = actx.session.memory_range.tx_buffer.config;
     if (payload_data_length > actx.session.memory_range.tx_buffer.length - payload_data_offset) {
-        THROW((taint_session{actx.session, grpc::StatusCode::OUT_OF_RANGE, "notice payload length is out of bounds"}));
+        THROW_CONTEXT(
+            (taint_session{actx.session, grpc::StatusCode::OUT_OF_RANGE, "notice payload length is out of bounds"}),
+            actx.request_context);
     }
     ReadMemoryRequest read_request;
     read_request.set_address(range.start() + payload_data_offset);
@@ -2181,9 +2263,10 @@ static std::string read_tx_payload_data(async_context &actx, uint64_t payload_da
     ReadMemoryResponse read_response;
     reader->Finish(&read_response, &read_status, actx.self);
     actx.yield(side_effect::none);
-    CHECK_STATUS_OR_TAINT(read_status, actx.session, "fast");
+    CHECK_STATUS_OR_TAINT(read_status, actx.session, "fast", actx.request_context);
     if (read_response.data().size() != payload_data_length) {
-        THROW((taint_session{actx.session, grpc::StatusCode::INTERNAL, "read returned wrong number of bytes!"}));
+        THROW_CONTEXT((taint_session{actx.session, grpc::StatusCode::INTERNAL, "read returned wrong number of bytes!"}),
+            actx.request_context);
     }
     // Here we can't use copy elision because read_response holds the string we want to move out
     auto *data = read_response.release_data();
@@ -2206,7 +2289,7 @@ static proof_type get_proof(async_context &actx, uint64_t address, uint64_t log2
     GetProofResponse proof_response;
     reader->Finish(&proof_response, &proof_status, actx.self);
     actx.yield(side_effect::none);
-    CHECK_STATUS_OR_TAINT(proof_status, actx.session, "machine (proof)");
+    CHECK_STATUS_OR_TAINT(proof_status, actx.session, "machine (proof)", actx.request_context);
     return cartesi::get_proto_merkle_tree_proof(proof_response.proof());
 }
 
@@ -2265,7 +2348,7 @@ static void snapshot(async_context &actx) {
     Void response;
     reader->Finish(&response, &status, actx.self);
     actx.yield(side_effect::none);
-    CHECK_STATUS_OR_TAINT(status, actx.session, "fast");
+    CHECK_STATUS_OR_TAINT(status, actx.session, "fast", actx.request_context);
 }
 
 /// \brief Asynchronously rollback machine server. Used after an input was skipped.
@@ -2279,7 +2362,7 @@ static void rollback(async_context &actx) {
     Void response;
     reader->Finish(&response, &status, actx.self);
     actx.yield(side_effect::none);
-    CHECK_STATUS_OR_TAINT(status, actx.session, "fast");
+    CHECK_STATUS_OR_TAINT(status, actx.session, "fast", actx.request_context);
 }
 
 /// \brief Asynchronously resets the iflags.y flag after a machine has yielded
@@ -2293,7 +2376,7 @@ static void reset_iflags_y(async_context &actx) {
     Void response;
     reader->Finish(&response, &status, actx.self);
     actx.yield(side_effect::none);
-    CHECK_STATUS_OR_TAINT(status, actx.session, "fast");
+    CHECK_STATUS_OR_TAINT(status, actx.session, "fast", actx.request_context);
 }
 
 /// \brief Asynchronously gets the value of HTIF's fromhost CSR
@@ -2309,7 +2392,7 @@ static uint64_t get_htif_fromhost(async_context &actx) {
     ReadCsrResponse response;
     reader->Finish(&response, &status, actx.self);
     actx.yield(side_effect::none);
-    CHECK_STATUS_OR_TAINT(status, actx.session, "fast");
+    CHECK_STATUS_OR_TAINT(status, actx.session, "fast", actx.request_context);
     return response.value();
 }
 
@@ -2327,7 +2410,7 @@ static void set_htif_fromhost(async_context &actx, uint64_t value) {
     Void response;
     reader->Finish(&response, &status, actx.self);
     actx.yield(side_effect::none);
-    CHECK_STATUS_OR_TAINT(status, actx.session, "fast");
+    CHECK_STATUS_OR_TAINT(status, actx.session, "fast", actx.request_context);
 }
 
 /// \brief Asynchronously sets htif fromhost ack to specify a given request
@@ -2345,9 +2428,10 @@ static void check_htif_yield_ack_data(async_context &actx, uint64_t reqid) {
     check_htif_yield_manual(actx, "htif.fromhost", value);
     auto data = htif_data_field(value);
     if (data != reqid) {
-        THROW((taint_session{actx.session, grpc::StatusCode::INTERNAL,
-            "invalid data field in htif.fromhost (expected " + std::to_string(reqid) + ", got " + std::to_string(data) +
-                ")"}));
+        THROW_CONTEXT((taint_session{actx.session, grpc::StatusCode::INTERNAL,
+                          "invalid data field in htif.fromhost (expected " + std::to_string(reqid) + ", got " +
+                              std::to_string(data) + ")"}),
+            actx.request_context);
     }
 }
 
@@ -2428,11 +2512,13 @@ static void process_pending_query(handler_context &hctx, async_context &actx, ep
                 q.exception_data = read_exception(actx);
                 break;
             }
-            THROW((taint_session{actx.session, grpc::StatusCode::OUT_OF_RANGE, "unknown machine yield reason"}));
+            THROW_CONTEXT((taint_session{actx.session, grpc::StatusCode::OUT_OF_RANGE, "unknown machine yield reason"}),
+                actx.request_context);
         }
         if (!run_response.value().iflags_x()) {
-            THROW((taint_session{actx.session, grpc::StatusCode::INTERNAL,
-                "machine returned without hitting mcycle limit or yielding"}));
+            THROW_CONTEXT((taint_session{actx.session, grpc::StatusCode::INTERNAL,
+                              "machine returned without hitting mcycle limit or yielding"}),
+                actx.request_context);
         }
         // process automatic yields
         if (yield_reason == HTIF_YIELD_REASON_TX_REPORT) {
@@ -2458,10 +2544,12 @@ static void process_pending_inputs(handler_context &hctx, async_context &actx, e
     // This is just for peace of mind: there is no way two concurrent calls can happen
     // (See discussion where process_pending_inputs is called.)
     if (actx.session.processing_lock) {
-        THROW((taint_session{actx.session, grpc::StatusCode::INTERNAL,
-            "concurrent input processing detected in session"}));
+        THROW_CONTEXT((taint_session{actx.session, grpc::StatusCode::INTERNAL,
+                          "concurrent input processing detected in session"}),
+            actx.request_context);
     }
-    auto_lock processing_lock(actx.session.processing_lock, "process_pending_inputs processing lock");
+    auto_lock processing_lock(actx.session.processing_lock, "process_pending_inputs processing lock",
+        actx.request_context);
     while (!e.pending_inputs.empty()) {
         auto global_input_index = actx.session.processed_input_count;
         auto epoch_input_index = e.processed_inputs.size();
@@ -2537,12 +2625,14 @@ static void process_pending_inputs(handler_context &hctx, async_context &actx, e
                         exception_data = read_exception(actx);
                         break;
                     }
-                    THROW(
-                        (taint_session{actx.session, grpc::StatusCode::OUT_OF_RANGE, "unknown machine yield reason"}));
+                    THROW_CONTEXT(
+                        (taint_session{actx.session, grpc::StatusCode::OUT_OF_RANGE, "unknown machine yield reason"}),
+                        actx.request_context);
                 }
                 if (!run_response.value().iflags_x()) {
-                    THROW((taint_session{actx.session, grpc::StatusCode::INTERNAL,
-                        "machine returned without hitting mcycle limit or yielding"}));
+                    THROW_CONTEXT((taint_session{actx.session, grpc::StatusCode::INTERNAL,
+                                      "machine returned without hitting mcycle limit or yielding"}),
+                        actx.request_context);
                 }
                 // process automatic yields
                 if (yield_reason == HTIF_YIELD_REASON_TX_VOUCHER) {
@@ -2560,12 +2650,14 @@ static void process_pending_inputs(handler_context &hctx, async_context &actx, e
                 current_mcycle = run_response.value().mcycle();
             }
             if (e.vouchers_tree.size() != epoch_input_index) {
-                THROW((taint_session{actx.session, grpc::StatusCode::INTERNAL,
-                    "inconsistent number of entries in epoch's session vouchers Merkle tree"}));
+                THROW_CONTEXT((taint_session{actx.session, grpc::StatusCode::INTERNAL,
+                                  "inconsistent number of entries in epoch's session vouchers Merkle tree"}),
+                    actx.request_context);
             }
             if (e.notices_tree.size() != epoch_input_index) {
-                THROW((taint_session{actx.session, grpc::StatusCode::INTERNAL,
-                    "inconsistent number of entries in epoch's session notices Merkle tree"}));
+                THROW_CONTEXT((taint_session{actx.session, grpc::StatusCode::INTERNAL,
+                                  "inconsistent number of entries in epoch's session notices Merkle tree"}),
+                    actx.request_context);
             }
         } else {
             LOG_CONTEXT(debug, actx.request_context) << "      Input skipped because payload was too long";
@@ -2587,12 +2679,13 @@ static void process_pending_inputs(handler_context &hctx, async_context &actx, e
             uint64_t voucher_count = count_null_terminated_entries(voucher_hashes, KECCAK_SIZE);
             LOG_CONTEXT(debug, actx.request_context) << "    Voucher count " << voucher_count;
             if (voucher_count != vouchers.size()) {
-                THROW((taint_session{actx.session, grpc::StatusCode::INVALID_ARGUMENT,
-                    "number of vouchers yielded and non-zero voucher hashes disagree"}));
+                THROW_CONTEXT((taint_session{actx.session, grpc::StatusCode::INVALID_ARGUMENT,
+                                  "number of vouchers yielded and non-zero voucher hashes disagree"}),
+                    actx.request_context);
             }
             // Get hash for each voucher
             for (uint64_t entry_index = 0; entry_index < voucher_count; ++entry_index) {
-                auto keccak = get_hash(actx.session, &voucher_hashes[entry_index * KECCAK_SIZE],
+                auto keccak = get_hash(actx.request_context, actx.session, &voucher_hashes[entry_index * KECCAK_SIZE],
                     &voucher_hashes[(entry_index + 1) * KECCAK_SIZE]);
                 LOG_CONTEXT(debug, actx.request_context)
                     << "      Getting proof of keccak " << entry_index << " in voucher hashes memory range";
@@ -2617,12 +2710,13 @@ static void process_pending_inputs(handler_context &hctx, async_context &actx, e
             uint64_t notice_count = count_null_terminated_entries(notice_hashes, KECCAK_SIZE);
             LOG_CONTEXT(debug, actx.request_context) << "    Notice count " << notice_count;
             if (notice_count != notices.size()) {
-                THROW((taint_session{actx.session, grpc::StatusCode::INVALID_ARGUMENT,
-                    "number notices yielded and non-zero notice hashes disagree"}));
+                THROW_CONTEXT((taint_session{actx.session, grpc::StatusCode::INVALID_ARGUMENT,
+                                  "number notices yielded and non-zero notice hashes disagree"}),
+                    actx.request_context);
             }
             // Get hash for each notice
             for (uint64_t entry_index = 0; entry_index < notice_count; ++entry_index) {
-                auto keccak = get_hash(actx.session, &notice_hashes[entry_index * KECCAK_SIZE],
+                auto keccak = get_hash(actx.request_context, actx.session, &notice_hashes[entry_index * KECCAK_SIZE],
                     &notice_hashes[(entry_index + 1) * KECCAK_SIZE]);
                 LOG_CONTEXT(debug, actx.request_context)
                     << "      Getting proof of keccak " << entry_index << " in notice hashes memory range";
@@ -2670,8 +2764,9 @@ static void process_pending_inputs(handler_context &hctx, async_context &actx, e
                 e.notices_tree.get_proof(epoch_input_index << LOG2_KECCAK_SIZE, LOG2_KECCAK_SIZE);
             // Check the machine hash has not changed
             if (e.most_recent_machine_hash != get_root_hash(actx)) {
-                THROW((
-                    taint_session{actx.session, grpc::StatusCode::INTERNAL, "machine hash is changed after rollback"}));
+                THROW_CONTEXT(
+                    (taint_session{actx.session, grpc::StatusCode::INTERNAL, "machine hash is changed after rollback"}),
+                    actx.request_context);
             }
             // Add skipped input to list of processed inputs
             e.processed_inputs.push_back(processed_input_type{global_input_index, epoch_input_index,
@@ -2725,78 +2820,96 @@ static handler_type::pull_type *new_AdvanceState_handler(handler_context &hctx) 
                                                << advance_state_request.active_epoch_index();
             // If a session is unknown, a bail out
             if (sessions.find(id) == sessions.end()) {
-                THROW((finish_error_yield_none{grpc::StatusCode::INVALID_ARGUMENT, "session id not found!"}));
+                THROW_CONTEXT((finish_error_yield_none{grpc::StatusCode::INVALID_ARGUMENT, "session id not found!"}),
+                    request_context);
             }
             // Otherwise, get session and lock until we exit handler
             auto &session = sessions[id];
             // If active_epoch_index is too large, bail
             if (session.active_epoch_index == UINT64_MAX) {
-                THROW((finish_error_yield_none{grpc::StatusCode::OUT_OF_RANGE, "active epoch index will overflow"}));
+                THROW_CONTEXT(
+                    (finish_error_yield_none{grpc::StatusCode::OUT_OF_RANGE, "active epoch index will overflow"}),
+                    request_context);
             }
             // If session is already locked, bail out
             auto new_lock_reason = get_session_lock_reason("AdvanceState", request_context.peer());
             if (session.session_lock) {
-                THROW((finish_error_yield_none{grpc::StatusCode::ABORTED,
-                    "concurrent call in session (already locked by " + session.session_lock_reason +
-                        " when attempted lock by " + new_lock_reason + ")"}));
+                THROW_CONTEXT((finish_error_yield_none{grpc::StatusCode::ABORTED,
+                                  "concurrent call in session (already locked by " + session.session_lock_reason +
+                                      " when attempted lock by " + new_lock_reason + ")"}),
+                    request_context);
             }
             // Lock session so other rpcs to the same session are rejected
-            auto_lock session_lock(session.session_lock, "AdvanceState session lock");
+            auto_lock session_lock(session.session_lock, "AdvanceState session lock", request_context);
             session.session_lock_reason = new_lock_reason;
             // If session is tainted, report potential data loss
             if (session.tainted) {
-                THROW((finish_error_yield_none{grpc::StatusCode::DATA_LOSS,
-                    "session was previously tainted ("s + session.taint_status.error_message() + ")"}));
+                THROW_CONTEXT((finish_error_yield_none{grpc::StatusCode::DATA_LOSS,
+                                  "session was previously tainted ("s + session.taint_status.error_message() + ")"}),
+                    request_context);
             }
             // If active epoch does not match expected, bail out
             if (session.active_epoch_index != advance_state_request.active_epoch_index()) {
-                THROW((finish_error_yield_none{grpc::StatusCode::INVALID_ARGUMENT,
-                    "incorrect active epoch index (expected " + std::to_string(session.active_epoch_index) + ", got " +
-                        std::to_string(advance_state_request.active_epoch_index()) + ")"}));
+                THROW_CONTEXT(
+                    (finish_error_yield_none{grpc::StatusCode::INVALID_ARGUMENT,
+                        "incorrect active epoch index (expected " + std::to_string(session.active_epoch_index) +
+                            ", got " + std::to_string(advance_state_request.active_epoch_index()) + ")"}),
+                    request_context);
             }
             // We should be able to find the active epoch, otherwise bail
             auto &epochs = session.epochs;
             if (epochs.find(session.active_epoch_index) == epochs.end()) {
-                THROW((finish_error_yield_none{grpc::StatusCode::INTERNAL, "active epoch not found"}));
+                THROW_CONTEXT((finish_error_yield_none{grpc::StatusCode::INTERNAL, "active epoch not found"}),
+                    request_context);
             }
             auto &e = epochs[session.active_epoch_index];
             // If epoch is finished, bail out
             if (e.state != epoch_state::active) {
-                THROW((finish_error_yield_none{grpc::StatusCode::INVALID_ARGUMENT, "epoch is finished"}));
+                THROW_CONTEXT((finish_error_yield_none{grpc::StatusCode::INVALID_ARGUMENT, "epoch is finished"}),
+                    request_context);
             }
             // If current input does not match expected, bail out
             auto current_input_index = e.pending_inputs.size() + session.processed_input_count;
             if (current_input_index != advance_state_request.current_input_index()) {
-                THROW((finish_error_yield_none{grpc::StatusCode::INVALID_ARGUMENT,
-                    "incorrect current input index (expected " + std::to_string(session.processed_input_count) +
-                        ", got " + std::to_string(advance_state_request.current_input_index()) + ")"}));
+                THROW_CONTEXT(
+                    (finish_error_yield_none{grpc::StatusCode::INVALID_ARGUMENT,
+                        "incorrect current input index (expected " + std::to_string(session.processed_input_count) +
+                            ", got " + std::to_string(advance_state_request.current_input_index()) + ")"}),
+                    request_context);
             }
             // Check input metadata
             if (!advance_state_request.has_input_metadata()) {
-                THROW((finish_error_yield_none{grpc::StatusCode::INVALID_ARGUMENT, "missing input metadata"}));
+                THROW_CONTEXT((finish_error_yield_none{grpc::StatusCode::INVALID_ARGUMENT, "missing input metadata"}),
+                    request_context);
             }
             if (!advance_state_request.input_metadata().has_msg_sender()) {
-                THROW(
-                    (finish_error_yield_none{grpc::StatusCode::INVALID_ARGUMENT, "missing input metadata msg_sender"}));
+                THROW_CONTEXT(
+                    (finish_error_yield_none{grpc::StatusCode::INVALID_ARGUMENT, "missing input metadata msg_sender"}),
+                    request_context);
             }
             if (advance_state_request.input_metadata().msg_sender().data().size() != EVM_ADDRESS_LENGTH) {
-                THROW((finish_error_yield_none{grpc::StatusCode::INVALID_ARGUMENT,
-                    "invalid input metadata msg_sender length (expected " + std::to_string(EVM_ADDRESS_LENGTH) +
-                        " bytes, got " +
-                        std::to_string(advance_state_request.input_metadata().msg_sender().data().size()) +
-                        " bytes)"}));
+                THROW_CONTEXT(
+                    (finish_error_yield_none{grpc::StatusCode::INVALID_ARGUMENT,
+                        "invalid input metadata msg_sender length (expected " + std::to_string(EVM_ADDRESS_LENGTH) +
+                            " bytes, got " +
+                            std::to_string(advance_state_request.input_metadata().msg_sender().data().size()) +
+                            " bytes)"}),
+                    request_context);
             }
             auto input_metadata = get_proto_input_metadata(advance_state_request.input_metadata());
             // Double-check that epoch index and input index are correct
             if (input_metadata.epoch_index != 0) {
-                THROW((finish_error_yield_none{grpc::StatusCode::INVALID_ARGUMENT,
-                    "input metadata epoch index is deprecated. Should always be 0 received (" +
-                        std::to_string(input_metadata.epoch_index) + ")"}));
+                THROW_CONTEXT((finish_error_yield_none{grpc::StatusCode::INVALID_ARGUMENT,
+                                  "input metadata epoch index is deprecated. Should always be 0 received (" +
+                                      std::to_string(input_metadata.epoch_index) + ")"}),
+                    request_context);
             }
             if (input_metadata.input_index != current_input_index) {
-                THROW((finish_error_yield_none{grpc::StatusCode::INVALID_ARGUMENT,
-                    "input metadata input index (" + std::to_string(input_metadata.input_index) +
-                        ") is inconsistent with current input index (" + std::to_string(current_input_index) + ")"}));
+                THROW_CONTEXT((finish_error_yield_none{grpc::StatusCode::INVALID_ARGUMENT,
+                                  "input metadata input index (" + std::to_string(input_metadata.input_index) +
+                                      ") is inconsistent with current input index (" +
+                                      std::to_string(current_input_index) + ")"}),
+                    request_context);
             }
             // Enqueue input
             e.pending_inputs.emplace_back(input_metadata, advance_state_request.input_payload());
@@ -2930,34 +3043,39 @@ static handler_type::pull_type *new_InspectState_handler(handler_context &hctx) 
             LOG_CONTEXT(info, request_context) << "Received InspectState for session " << id;
             // If a session is unknown, a bail out
             if (sessions.find(id) == sessions.end()) {
-                THROW((finish_error_yield_none{grpc::StatusCode::INVALID_ARGUMENT, "session id not found!"}));
+                THROW_CONTEXT((finish_error_yield_none{grpc::StatusCode::INVALID_ARGUMENT, "session id not found!"}),
+                    request_context);
             }
             // Otherwise, get session and lock until we exit handler
             auto &session = sessions[id];
             // If session is already locked, bail out
             auto new_lock_reason = get_session_lock_reason("InspectState", request_context.peer());
             if (session.session_lock) {
-                THROW((finish_error_yield_none{grpc::StatusCode::ABORTED,
-                    "concurrent call in session (already locked by " + session.session_lock_reason +
-                        " when attempted lock by " + new_lock_reason + ")"}));
+                THROW_CONTEXT((finish_error_yield_none{grpc::StatusCode::ABORTED,
+                                  "concurrent call in session (already locked by " + session.session_lock_reason +
+                                      " when attempted lock by " + new_lock_reason + ")"}),
+                    request_context);
             }
             // Lock session so other rpcs to the same session are rejected
-            auto_lock session_lock(session.session_lock, "InspectState session lock");
+            auto_lock session_lock(session.session_lock, "InspectState session lock", request_context);
             session.session_lock_reason = new_lock_reason;
             // If session is tainted, report potential data loss
             if (session.tainted) {
-                THROW((finish_error_yield_none{grpc::StatusCode::DATA_LOSS,
-                    "session was previously tainted ("s + session.taint_status.error_message() + ")"}));
+                THROW_CONTEXT((finish_error_yield_none{grpc::StatusCode::DATA_LOSS,
+                                  "session was previously tainted ("s + session.taint_status.error_message() + ")"}),
+                    request_context);
             }
             // We should be able to find the active epoch, otherwise bail
             auto &epochs = session.epochs;
             if (epochs.find(session.active_epoch_index) == epochs.end()) {
-                THROW((finish_error_yield_none{grpc::StatusCode::INTERNAL, "active epoch not found"}));
+                THROW_CONTEXT((finish_error_yield_none{grpc::StatusCode::INTERNAL, "active epoch not found"}),
+                    request_context);
             }
             auto &e = epochs[session.active_epoch_index];
             // Make sure there isn't already another pending query
             if (e.pending_query.has_value()) {
-                THROW((finish_error_yield_none{grpc::StatusCode::INTERNAL, "another query is already pending"}));
+                THROW_CONTEXT((finish_error_yield_none{grpc::StatusCode::INTERNAL, "another query is already pending"}),
+                    request_context);
             }
             // Add pending query
             e.pending_query.emplace(inspect_state_request.query_payload());
@@ -2981,8 +3099,9 @@ static handler_type::pull_type *new_InspectState_handler(handler_context &hctx) 
             }
             // There is a chance the session was tainted between our yielding and being resumed
             if (session.tainted) {
-                THROW((finish_error_yield_none{grpc::StatusCode::DATA_LOSS,
-                    "session is tainted ("s + session.taint_status.error_message() + ")"}));
+                THROW_CONTEXT((finish_error_yield_none{grpc::StatusCode::DATA_LOSS,
+                                  "session is tainted ("s + session.taint_status.error_message() + ")"}),
+                    request_context);
             }
             async_context actx{session, request_context, hctx.completion_queue.get(), self, yield};
             process_pending_query(hctx, actx, e);
@@ -3078,13 +3197,15 @@ static handler_type::pull_type *new_Checkin_handler(handler_context &hctx) {
             LOG_CONTEXT(info, request_context) << "Received CheckIn for session " << id;
             // If check-in is for the wrong session, bail out
             if (hctx.sessions_waiting_checkin.find(id) == hctx.sessions_waiting_checkin.end()) {
-                THROW((finish_error_yield_none{grpc::StatusCode::INVALID_ARGUMENT,
-                    "check-in with wrong session id " + id}));
+                THROW_CONTEXT((finish_error_yield_none{grpc::StatusCode::INVALID_ARGUMENT,
+                                  "check-in with wrong session id " + id}),
+                    request_context);
             }
             // If the actual session is unknown, a bail out
             if (hctx.sessions.find(id) == hctx.sessions.end()) {
-                THROW((finish_error_yield_none{grpc::StatusCode::INVALID_ARGUMENT,
-                    "could not find an actual session with id " + id}));
+                THROW_CONTEXT((finish_error_yield_none{grpc::StatusCode::INVALID_ARGUMENT,
+                                  "could not find an actual session with id " + id}),
+                    request_context);
             }
             // Get session and register remote machine address
             auto &session = hctx.sessions[id];
