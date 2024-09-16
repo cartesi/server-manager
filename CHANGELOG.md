@@ -6,8 +6,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 ### Changed
-- Improved messages when there is a timeout
-- Improved messages when session is tainted
+- Improved error messages and logs
 - Added request metadata to log message of thrown exceptions
 
 ## [0.9.1] - 2024-03-28

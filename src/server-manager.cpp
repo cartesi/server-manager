@@ -140,11 +140,11 @@ static std::string request_metadata(const grpc::ServerContext &context) {
         if (!stat.ok()) {                                                                                              \
             if (stat.error_code() == grpc::StatusCode::DEADLINE_EXCEEDED) {                                            \
                 THROW_CONTEXT((finish_error_yield_none{stat.error_code(),                                              \
-                                  "error contacting remote server: "s + deadline + " deadline exceeded"s}),            \
+                                  "error contacting remote machine server: "s + deadline + " deadline exceeded"s}),    \
                     context);                                                                                          \
             } else {                                                                                                   \
                 THROW_CONTEXT((finish_error_yield_none{stat.error_code(),                                              \
-                                  "error contacting remote server: "s + stat.error_message()}),                        \
+                                  "error contacting remote machine server: "s + stat.error_message()}),                \
                     context);                                                                                          \
             }                                                                                                          \
         }                                                                                                              \
@@ -156,11 +156,11 @@ static std::string request_metadata(const grpc::ServerContext &context) {
         if (!stat.ok()) {                                                                                              \
             if (stat.error_code() == grpc::StatusCode::DEADLINE_EXCEEDED) {                                            \
                 THROW_CONTEXT((taint_session{session, stat.error_code(),                                               \
-                                  "error contacting remote server: "s + deadline + " deadline exceeded"s}),            \
+                                  "error contacting remote machine server: "s + deadline + " deadline exceeded"s}),    \
                     context);                                                                                          \
             } else {                                                                                                   \
                 THROW_CONTEXT((taint_session{session, stat.error_code(),                                               \
-                                  "error contacting remote server: "s + stat.error_message()}),                        \
+                                  "error contacting remote machine server: "s + stat.error_message()}),                \
                     context);                                                                                          \
             }                                                                                                          \
         }                                                                                                              \
@@ -979,7 +979,7 @@ static handler_type::pull_type *new_DeleteEpoch_handler(handler_context &hctx) {
 /// \brief Asynchronously shutsdown the machine server
 /// \param actx Context for async operations
 static void shutdown_server(async_context &actx) {
-    LOG_CONTEXT(debug, actx.request_context) << "  Shutting server down";
+    LOG_CONTEXT(debug, actx.request_context) << "  Shutting remote machine server down";
     Void request;
     Void response;
     grpc::ClientContext client_context;
@@ -1058,7 +1058,7 @@ static handler_type::pull_type *new_EndSession_handler(handler_context &hctx) {
             shutdown_server(actx);
             if (session.tainted) {
                 LOG_CONTEXT(info, request_context)
-                    << "Session " << id << " is tainted. Terminating remote-cartesi-machine process group";
+                    << "Session " << id << " is tainted. Terminating remote machine server process group";
                 session.server_process_group.terminate();
             }
             sessions.erase(id);
@@ -1388,7 +1388,7 @@ static auto get_proto_session(const StartSessionRequest &request) {
 /// \brief Asynchronously checks that server version matches manager
 /// \param actx Context for async operations
 static void check_server_version(async_context &actx) {
-    LOG_CONTEXT(debug, actx.request_context) << "  Checking server version";
+    LOG_CONTEXT(debug, actx.request_context) << "  Checking remote machine server version";
     // Try to get version from client
     GetVersionResponse response;
     Void request;
@@ -1402,7 +1402,7 @@ static void check_server_version(async_context &actx) {
     // If version is incompatible, bail out
     if (response.version().major() != machine_version_major || response.version().minor() != machine_version_minor) {
         THROW_CONTEXT((finish_error_yield_none{grpc::StatusCode::FAILED_PRECONDITION,
-                          "manager is incompatible with machine server"}),
+                          "server manager is incompatible with remote machine server"}),
             actx.request_context);
     }
 }
@@ -1411,7 +1411,7 @@ static void check_server_version(async_context &actx) {
 /// \param actx Context for async operations
 /// \param request Machine request received from StartSession RPC
 static void check_server_machine(async_context &actx, const std::string &directory) {
-    LOG_CONTEXT(debug, actx.request_context) << "  Instantiating machine " << directory;
+    LOG_CONTEXT(debug, actx.request_context) << "  Instantiating remote machine " << directory;
     MachineRequest request;
     request.set_directory(directory);
     Void response;
@@ -1447,7 +1447,7 @@ static MachineConfig get_initial_config(async_context &actx) {
 /// \param config MemoryRangeConfig returned by server
 static void check_memory_range_config(const grpc::ServerContext &request_context, memory_range_description_type &desc,
     const std::string &name, const MemoryRangeConfig &config) {
-    LOG_CONTEXT(debug, request_context) << "  Checking " << name << " buffer config";
+    LOG_CONTEXT(debug, request_context) << "  Checking remote machine " << name << " buffer config";
     desc.config = config;
     if (desc.config.shared()) {
         THROW_CONTEXT((finish_error_yield_none{grpc::StatusCode::INVALID_ARGUMENT, name + " buffer cannot be shared"}),
@@ -1494,14 +1494,15 @@ static void check_rollup_config(const grpc::ServerContext &request_context, sess
     const MachineConfig &config) {
     // If rollup config, bail out
     if (!config.has_rollup()) {
-        THROW_CONTEXT((finish_error_yield_none{grpc::StatusCode::INVALID_ARGUMENT, "missing server rollup config"}),
+        THROW_CONTEXT(
+            (finish_error_yield_none{grpc::StatusCode::INVALID_ARGUMENT, "missing remote machine rollup config"}),
             request_context);
     }
     const auto &rollup = config.rollup();
     if (rollup.rx_buffer().length() == 0 && rollup.tx_buffer().length() == 0 && rollup.input_metadata().length() == 0 &&
         rollup.voucher_hashes().length() == 0 && rollup.notice_hashes().length() == 0) {
         THROW_CONTEXT(
-            (finish_error_yield_none{grpc::StatusCode::INVALID_ARGUMENT, "server rollup config was not initialized"}),
+            (finish_error_yield_none{grpc::StatusCode::INVALID_ARGUMENT, "invalid remote machine rollup config"}),
             request_context);
     }
     check_memory_range_config(request_context, session.memory_range.tx_buffer, "tx buffer", rollup.tx_buffer());
@@ -1545,7 +1546,7 @@ static handler_type::pull_type *new_CheckinDeadline_handler(handler_context &hct
         auto *cq = hctx.completion_queue.get();
         it_before->second.alarm->Set(cq, std::chrono::system_clock::now() + std::chrono::milliseconds(deadline), self);
         yield(side_effect::none);
-        BOOST_LOG_TRIVIAL(debug) << "Resuming Check-in deadline alarm coroutine for session: " << id;
+        BOOST_LOG_TRIVIAL(debug) << "Resuming check-in deadline alarm coroutine for session: " << id;
         if (!hctx.ok) {
             BOOST_LOG_TRIVIAL(debug) << "Check-in deadline alarm was canceled";
             return;
@@ -1556,7 +1557,7 @@ static handler_type::pull_type *new_CheckinDeadline_handler(handler_context &hct
             BOOST_LOG_TRIVIAL(fatal) << "Deadline alarm failed to find session waiting for check-in with id: " << id;
             exit(1);
         }
-        BOOST_LOG_TRIVIAL(error) << "Check-in deadline for remote machine was reached on session: " << id;
+        BOOST_LOG_TRIVIAL(error) << "Check-in deadline for remote machine server was reached on session: " << id;
         // auto &session = hctx.sessions[id];
         checkin_context &cctx = it_after->second;
         // Acknowledge that check-in has failed
@@ -1570,7 +1571,7 @@ static handler_type::pull_type *new_CheckinDeadline_handler(handler_context &hct
 template <class T>
 void trigger_and_wait_checkin(handler_context &hctx, async_context &actx, T trigger_checkin) {
     // trigger remote check-in
-    LOG_CONTEXT(debug, actx.request_context) << "  Triggering machine server check-in";
+    LOG_CONTEXT(debug, actx.request_context) << "  Triggering remote machine server check-in";
     // Assert that this session is not waiting for check-in already
     if (hctx.sessions_waiting_checkin.find(actx.session.id) != hctx.sessions_waiting_checkin.end()) {
         LOG_CONTEXT(fatal, actx.request_context) << "Session is already waiting for a previous check-in.";
@@ -1673,7 +1674,7 @@ static void check_yield_reason_accepted(async_context &actx, uint64_t value) {
 /// \param actx Context for async operations
 /// \return Register value
 static uint64_t get_current_mcycle(async_context &actx) {
-    LOG_CONTEXT(debug, actx.request_context) << "  Reading machine current mcycle";
+    LOG_CONTEXT(debug, actx.request_context) << "  Reading remote machine current mcycle";
     ReadCsrRequest request;
     request.set_csr(Csr::MCYCLE);
     grpc::ClientContext client_context;
@@ -1692,7 +1693,7 @@ static uint64_t get_current_mcycle(async_context &actx) {
 static uint64_t check_is_yielded(async_context &actx) {
     // if already yielded manual, this won't change anything
     auto current_mcycle = get_current_mcycle(actx);
-    LOG_CONTEXT(debug, actx.request_context) << "  Checking machine is yielded";
+    LOG_CONTEXT(debug, actx.request_context) << "  Checking remote machine is yielded";
     RunRequest run_request;
     run_request.set_limit(current_mcycle); // This will not change the machine
     grpc::ClientContext client_context;
@@ -1789,7 +1790,8 @@ static handler_type::pull_type *new_StartSession_handler(handler_context &hctx) 
             session.session_lock_reason = new_lock_reason;
             // If no machine config or directory is set on machine request, bail out
             if (start_session_request.machine_directory().empty()) {
-                THROW_CONTEXT((finish_error_yield_none{StatusCode::INVALID_ARGUMENT, "missing machine directory"}),
+                THROW_CONTEXT(
+                    (finish_error_yield_none{StatusCode::INVALID_ARGUMENT, "missing machine directory in config"}),
                     request_context);
             }
             // If active_epoch_index is too large, bail
@@ -1857,7 +1859,7 @@ static handler_type::pull_type *new_StartSession_handler(handler_context &hctx) 
                     server_process.detach();
                 } catch (boost::process::process_error &e) {
                     THROW_CONTEXT((finish_error_yield_none{StatusCode::INTERNAL,
-                                      "failed spawning remote-cartesi-machine with command-line '" + cmdline + "' (" +
+                                      "failed spawning remote machine server with command-line '" + cmdline + "' (" +
                                           e.what() + ")"}),
                         actx.request_context);
                 }
